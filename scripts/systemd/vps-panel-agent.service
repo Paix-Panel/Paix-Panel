@@ -1,0 +1,46 @@
+[Unit]
+Description=VPS Panel privileged agent
+After=network-online.target mariadb.service
+# Wants, not Requires: with Requires every MariaDB restart (unattended
+# upgrades) restarted the agent and killed its running tasks, and a MariaDB
+# that failed to start took the whole panel down with it.
+Wants=network-online.target mariadb.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/vps-panel/.env
+ExecStart=/usr/local/bin/vps-panel-agent serve
+Restart=on-failure
+RestartSec=2s
+LimitNOFILE=65536
+# UMask 0007 so files the agent creates in /var/lib/vps-panel (panel.db, -wal,
+# -shm) are group-writable. Combined with the setgid bit on that directory
+# (install.sh chmod g+s), new files inherit group=vps-panel and the panel
+# (running as vps-panel) can write them too.
+UMask=0007
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=false
+
+# No ProtectHome=, ReadWritePaths= or any other mount sandboxing here. The
+# agent runs as root behind a token-gated unix socket and needs /home
+# (`useradd -m`, `userdel -r`, SSH keys) and /root (`git pull` / `cargo build`
+# for the self-update, /root/.ssh, /root/.npm), so they restricted nothing.
+# ReadWritePaths= stayed here for a while "as documentation" and was not
+# harmless: any such option puts the unit in a private mount namespace whose
+# mounts never reach the host. A volume mounted from the panel's terminal
+# showed up in the terminal and in Files, was invisible to every other
+# service, and was unmounted again by the next agent restart (every update).
+# Do not add one in a drop-in either; the checkout can live anywhere.
+#
+# App builds, the terminal and backups run in this unit's cgroup. With the
+# default OOMPolicy=stop, the kernel killing one of them for memory (a `next
+# build` on a small server) made systemd stop the whole agent: every running
+# task and terminal died, the panel restarted, and the failed build's
+# previous node_modules/.next were never put back.
+OOMPolicy=continue
+RuntimeDirectory=vps-panel
+RuntimeDirectoryMode=0755
+
+[Install]
+WantedBy=multi-user.target

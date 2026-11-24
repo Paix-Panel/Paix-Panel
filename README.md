@@ -1,16 +1,16 @@
-# <img src="docs/logo.svg" alt="" width="52" align="top"> Bolt Panel
+# <img src="docs/logo.svg" alt="" width="52" align="top"> Paix Panel
 
 **A free, self-hosted cPanel alternative for your own Ubuntu VPS.** Deploy Node.js apps from Git, any Docker image, or your own Dockerfile, run your domains, SSL, DNS and email with webmail, and manage databases and backups from one fast panel. Point Claude or any other MCP client at it and let an AI agent do the clicking.
 
-[![License: AGPL-3.0](https://img.shields.io/github/license/amani-sinkala/vps-panel)](LICENSE)
+[![License: AGPL-3.0](https://img.shields.io/github/license/Paix-Panel/Paix-Panel)](LICENSE)
 ![Ubuntu 24.04](https://img.shields.io/badge/Ubuntu-24.04_LTS-E95420?logo=ubuntu&logoColor=white)
 ![Rust agent](https://img.shields.io/badge/agent-Rust-B7410E?logo=rust)
 ![Next.js UI](https://img.shields.io/badge/UI-Next.js_16-000000?logo=nextdotjs)
-[![GitHub stars](https://img.shields.io/github/stars/amani-sinkala/vps-panel?style=social)](https://github.com/amani-sinkala/vps-panel/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/Paix-Panel/Paix-Panel?style=social)](https://github.com/Paix-Panel/Paix-Panel/stargazers)
 
-![Bolt Panel dashboard](docs/screenshots/dashboard.png)
+![Paix Panel dashboard](docs/screenshots/dashboard.png)
 
-## Why Bolt Panel
+## Why Paix Panel
 
 - **Free and open source.** AGPL-3.0, no per-account licence, no telemetry ([what does leave the server](docs/PRIVACY.md#what-leaves-the-server)).
 - **Light.** nginx, a Rust agent and a Next.js UI. No Apache/PHP stack to babysit; a 2 GB VPS is enough.
@@ -48,9 +48,9 @@
   </tr>
 </table>
 
-## Bolt Panel or cPanel?
+## Paix Panel or cPanel?
 
-| | Bolt Panel | cPanel |
+| | Paix Panel | cPanel |
 |---|---|---|
 | Price | Free, open source | Paid licence per account |
 | Built for | One owner running their own apps, mail and DNS | Hosting many separate customer accounts |
@@ -66,7 +66,7 @@
 On a fresh Ubuntu 24.04 server, as root:
 
 ```bash
-git clone https://github.com/amani-sinkala/vps-panel.git /root/vps-panel-src
+git clone https://github.com/Paix-Panel/Paix-Panel.git /root/vps-panel-src
 bash /root/vps-panel-src/scripts/install.sh --domain panel.example.com --email you@example.com
 ```
 
@@ -91,4 +91,4 @@ Copyright (C) 2026 Amani Sinkala.
 
 Licensed under [AGPL-3.0](LICENSE). You may use, change and share it; if you run a modified version as a service for others, you must publish your changes under the same license.
 
-If Bolt Panel saves you a cPanel licence or an afternoon of server setup, a star helps other people find it.
+If Paix Panel saves you a cPanel licence or an afternoon of server setup, a star helps other people find it.

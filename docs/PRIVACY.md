@@ -1,6 +1,6 @@
 # Privacy
 
-This page is for the person who runs a Bolt Panel server and answers for the personal data on it: when you write your own privacy policy, fill in a record of processing, or answer someone who asks what you hold about them. It says what the panel and the services it sets up store, where, for how long, what leaves the server, and what the settings under **Settings > Privacy** change. It describes the code of this version on a default install; where a value is a default of Ubuntu or of a package rather than something the panel sets, it says so.
+This page is for the person who runs a Paix Panel server and answers for the personal data on it: when you write your own privacy policy, fill in a record of processing, or answer someone who asks what you hold about them. It says what the panel and the services it sets up store, where, for how long, what leaves the server, and what the settings under **Settings > Privacy** change. It describes the code of this version on a default install; where a value is a default of Ubuntu or of a package rather than something the panel sets, it says so.
 
 - [At a glance](#at-a-glance)
 - [What is stored, where, and for how long](#what-is-stored-where-and-for-how-long)

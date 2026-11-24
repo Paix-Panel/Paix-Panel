@@ -116,7 +116,7 @@ export const DEFAULT_CONFIG: ThemeConfig = {
 /**
  * Built-in themes.
  *
- * "Bolt Purple" is the shipped design at full strength and derives to the
+ * "Paix Purple" is the shipped design at full strength and derives to the
  * exact palette that was hard-coded in globals.css. Every other preset is
  * deliberately dialled back: at full chroma a saturated hue on a near-black
  * page reads as glare rather than as an accent, so they ship calm and the
@@ -128,7 +128,7 @@ export const THEME_PRESETS: {
   name: string;
   config: ThemeConfig;
 }[] = [
-  { id: "purple", name: "Bolt Purple", config: { accent: DEFAULT_ACCENT, vividness: 1, tint: 1, glow: 1, overrides: {} } },
+  { id: "purple", name: "Paix Purple", config: { accent: DEFAULT_ACCENT, vividness: 1, tint: 1, glow: 1, overrides: {} } },
   { id: "plum", name: "Plum", config: { accent: "#b537f2", vividness: 0.5, tint: 0.34, glow: 0.42, overrides: {} } },
   { id: "indigo", name: "Indigo", config: { accent: "#6366f1", vividness: 0.62, tint: 0.36, glow: 0.45, overrides: {} } },
   { id: "azure", name: "Azure", config: { accent: "#3b82f6", vividness: 0.6, tint: 0.34, glow: 0.42, overrides: {} } },

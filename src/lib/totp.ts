@@ -10,7 +10,7 @@ export function newSecret(): string {
   return new Secret({ size: 20 }).base32;
 }
 
-export function totpUri(email: string, secret: string, issuer = "Bolt Panel"): string {
+export function totpUri(email: string, secret: string, issuer = "Paix Panel"): string {
   const t = new TOTP({
     issuer,
     label: email,

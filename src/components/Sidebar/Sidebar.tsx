@@ -127,7 +127,7 @@ export default function Sidebar() {
       <nav className={[styles.nav, open ? styles.navOpen : ""].join(" ").trim()}>
         <div className={styles.brand}>
           <BoltMark size={24} />
-          <div className={styles.brandText}>Bolt Panel</div>
+          <div className={styles.brandText}>Paix Panel</div>
           <button
             type="button"
             className={styles.closeBtn}

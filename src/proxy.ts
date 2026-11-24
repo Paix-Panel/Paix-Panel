@@ -49,7 +49,7 @@ export async function proxy(req: NextRequest) {
 
   const secret =
     process.env.JWT_SECRET ??
-    (isPreview ? "bolt-panel-preview-jwt-secret-key-2026" : undefined);
+    (isPreview ? "paix-panel-preview-jwt-secret-key-2026" : undefined);
   if (!secret) {
     return new NextResponse("server misconfigured: JWT_SECRET missing", { status: 500 });
   }

@@ -82,17 +82,24 @@ ACME_WEBROOT="/var/www/vps-panel-acme"
 log()  { printf "\033[1;36m==>\033[0m %s\n" "$*"; }
 warn() { printf "\033[1;33m  !\033[0m %s\n" "$*" >&2; }
 
-# Public IPv4 detection — used in IP-only mode for the .env PANEL_HOST display
-# value and later by pdns for local-address. Detected once here so both
-# consumers see the same value. The filter strips RFC1918/100.64/127/169.254
-# ranges and falls back to the first global v4 if no public one is found.
-# `|| true`: with pipefail, grep matching nothing (a NAT'd VPS with only a
-# private address) used to abort the installer right here.
+# Interface & Public IPv4 detection:
+# - LOCAL_IP is bound on an actual NIC (used by PowerDNS local-address).
+# - PUBLIC_IP is the internet-facing IPv4 (checked on interfaces first, then via
+#   api.ipify.org on NAT'd servers behind a router/cloud firewall, falling back
+#   to LOCAL_IP).
+LOCAL_IP=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1 || true)
 PUBLIC_IP=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 \
             | grep -vE '^(10|127|172\.(1[6-9]|2[0-9]|3[01])|192\.168|169\.254|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7]))\.' \
             | head -1 || true)
+if [[ -z "$PUBLIC_IP" ]] && command -v curl >/dev/null 2>&1; then
+  PROBE_IP=$(curl -4fsSL --max-time 4 https://api.ipify.org 2>/dev/null | tr -d '[:space:]' || true)
+  if [[ "$PROBE_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] \
+     && ! [[ "$PROBE_IP" =~ ^(10|127|172\.(1[6-9]|2[0-9]|3[01])|192\.168|169\.254|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7]))\. ]]; then
+    PUBLIC_IP="$PROBE_IP"
+  fi
+fi
 if [[ -z "$PUBLIC_IP" ]]; then
-  PUBLIC_IP=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1 || true)
+  PUBLIC_IP="$LOCAL_IP"
 fi
 
 # Effective hostnames for downstream service configs and the .env file.
@@ -142,6 +149,13 @@ fi
 # stops to ask which version to keep, or fails where nobody can answer. These
 # options keep the file that is installed, without asking.
 APT_KEEP_CONF=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+
+# If a non-fresh server has leftover broken /etc/dovecot configs before
+# dovecot-core is installed, move them aside so dpkg --configure succeeds.
+if ! dpkg -s dovecot-core >/dev/null 2>&1 && [[ -d /etc/dovecot ]]; then
+  warn "backing up pre-existing /etc/dovecot before installing dovecot-core"
+  mv /etc/dovecot "/etc/dovecot.pre-paix.$(date +%s)"
+fi
 
 log "updating apt"
 DEBIAN_FRONTEND=noninteractive apt-get update -qq
@@ -286,6 +300,7 @@ JWT_SECRET=$JWT_SECRET
 AGENT_TOKEN=$AGENT_TOKEN
 RESTIC_PASSWORD=$RESTIC_PASSWORD
 PANEL_HOST=$PANEL_HOST_ENV
+PUBLIC_IP=${PUBLIC_IP:-}
 PANEL_PORT=10000
 NODE_ENV=production
 AGENT_SOCKET=$RUN_DIR/agent.sock
@@ -311,6 +326,11 @@ fi
 #-------------------------------------------------- MariaDB schemas
 log "configuring MariaDB schemas"
 systemctl enable --now mariadb
+if ! mariadb -e "SELECT 1;" >/dev/null 2>&1; then
+  echo "FATAL: MariaDB root access via unix_socket failed (an existing root password is set)." >&2
+  echo "       Run: mariadb -u root -p -e \"ALTER USER 'root'@'localhost' IDENTIFIED VIA unix_socket; FLUSH PRIVILEGES;\"" >&2
+  exit 1
+fi
 
 # A re-run keeps the passwords PowerDNS, Postfix and Dovecot already have.
 # New ones on every run meant that a run which stopped before those services
@@ -406,17 +426,26 @@ SQL
 #-------------------------------------------------- PowerDNS
 log "configuring PowerDNS"
 
-# pdns must NOT bind to 0.0.0.0:53 on Ubuntu 24.04 because systemd-resolved is
-# already listening on 127.0.0.53:53 and 127.0.0.54:53 (the stub resolver).
-# Binding to 0.0.0.0 collides with those and pdns fails to start with
-# "Unable to bind UDP socket to '0.0.0.0:53': Address already in use".
-# Bind to the public IPv4 + 127.0.0.1 explicitly instead. $PUBLIC_IP was
-# detected near the top of this script.
-if [[ -z "$PUBLIC_IP" ]]; then
-  warn "no public IPv4 detected for pdns local-address; falling back to 127.0.0.1 only (pdns will only answer locally)"
+# Stop any pre-existing DNS daemon (bind9/named/dnsmasq) holding port 53.
+systemctl mask --now bind9 named 2>/dev/null || true
+systemctl disable --now dnsmasq unbound pdns-recursor 2>/dev/null || true
+if command -v docker >/dev/null 2>&1; then
+  for p in $(pgrep -x named 2>/dev/null || true); do
+    CID=$(grep -oE '[a-f0-9]{64}' "/proc/$p/cgroup" 2>/dev/null | head -1 || true)
+    [[ -n "$CID" ]] && docker update --restart=no "$CID" >/dev/null 2>&1 && docker stop "$CID" >/dev/null 2>&1 || true
+  done
+fi
+pkill -x named 2>/dev/null || true
+
+# pdns must bind to an actual interface IP (LOCAL_IP) + 127.0.0.1 rather than
+# 0.0.0.0:53 (which collides with systemd-resolved on 127.0.0.53:53) or an
+# external NAT IP that isn't assigned directly on the NIC.
+PDNS_BIND_IP="${LOCAL_IP:-$PUBLIC_IP}"
+if [[ -z "$PDNS_BIND_IP" ]]; then
+  warn "no local IPv4 detected for pdns local-address; falling back to 127.0.0.1 only (pdns will only answer locally)"
   PDNS_LOCAL_ADDRESS="127.0.0.1"
 else
-  PDNS_LOCAL_ADDRESS="$PUBLIC_IP,127.0.0.1"
+  PDNS_LOCAL_ADDRESS="$PDNS_BIND_IP,127.0.0.1"
 fi
 # IPv6 too. Once the server has a published IPv6 address, zones get AAAA
 # records for their own ns1/ns2 (agent/src/handlers/dns.rs), and a name server

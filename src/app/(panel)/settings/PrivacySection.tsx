@@ -15,7 +15,7 @@ import PrivacyRetentionForm from "./PrivacyRetentionForm";
 import { PrivacyStatusProvider, type StatusOrError } from "./PrivacyStatus";
 import local from "./privacy.module.css";
 
-const PRIVACY_DOC = "https://github.com/amani-sinkala/vps-panel/blob/main/docs/PRIVACY.md";
+const PRIVACY_DOC = "https://github.com/Paix-Panel/Paix-Panel/blob/main/docs/PRIVACY.md";
 
 export type PrivacyData = {
   /** As stored in panel.db: the panel reads these itself. */

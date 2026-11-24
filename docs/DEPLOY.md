@@ -14,7 +14,7 @@ The panel is designed to install onto a fresh Ubuntu 24.04 LTS server and bring 
 
 ```bash
 ssh root@your-server
-git clone https://github.com/amani-sinkala/vps-panel.git /root/vps-panel-src
+git clone https://github.com/Paix-Panel/Paix-Panel.git /root/vps-panel-src
 bash /root/vps-panel-src/scripts/install.sh --domain panel.example.com --email you@example.com
 ```
 

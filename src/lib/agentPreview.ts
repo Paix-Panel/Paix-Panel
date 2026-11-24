@@ -83,7 +83,7 @@ function getState(): PreviewState {
     apps: [
       {
         name: "core-api",
-        subdomain: "api.boltpanel.local",
+        subdomain: "api.paixpanel.local",
         port: 4001,
         source_dir: "/srv/apps/core-api",
         active: "active",
@@ -102,7 +102,7 @@ function getState(): PreviewState {
       },
       {
         name: "web-storefront",
-        subdomain: "app.boltpanel.local",
+        subdomain: "app.paixpanel.local",
         port: 4002,
         source_dir: "/srv/apps/web-storefront",
         active: "active",
@@ -116,7 +116,7 @@ function getState(): PreviewState {
         env: [
           { key: "NODE_ENV", value: "production" },
           { key: "PORT", value: "4002" },
-          { key: "NEXT_PUBLIC_API_URL", value: "https://api.boltpanel.local" },
+          { key: "NEXT_PUBLIC_API_URL", value: "https://api.paixpanel.local" },
         ],
       },
       {
@@ -136,30 +136,30 @@ function getState(): PreviewState {
       },
     ],
     sites: [
-      { domain: "vps.boltpanel.local", kind: "panel-host" },
-      { domain: "api.boltpanel.local", kind: "app" },
-      { domain: "app.boltpanel.local", kind: "app" },
+      { domain: "vps.paixpanel.local", kind: "panel-host" },
+      { domain: "api.paixpanel.local", kind: "app" },
+      { domain: "app.paixpanel.local", kind: "app" },
       { domain: "shopdemo.co.tz", kind: "app" },
-      { domain: "docs.boltpanel.local", kind: "site" },
+      { domain: "docs.paixpanel.local", kind: "site" },
     ],
     certs: [
-      { domain: "vps.boltpanel.local", not_after: futureDate(74), days_remaining: 74, serving: true },
-      { domain: "api.boltpanel.local", not_after: futureDate(78), days_remaining: 78, serving: true },
-      { domain: "app.boltpanel.local", not_after: futureDate(65), days_remaining: 65, serving: true },
+      { domain: "vps.paixpanel.local", not_after: futureDate(74), days_remaining: 74, serving: true },
+      { domain: "api.paixpanel.local", not_after: futureDate(78), days_remaining: 78, serving: true },
+      { domain: "app.paixpanel.local", not_after: futureDate(65), days_remaining: 65, serving: true },
       { domain: "shopdemo.co.tz", not_after: futureDate(85), days_remaining: 85, serving: true },
-      { domain: "docs.boltpanel.local", not_after: futureDate(19), days_remaining: 19, serving: true },
+      { domain: "docs.paixpanel.local", not_after: futureDate(19), days_remaining: 19, serving: true },
     ],
     zones: [
-      { id: 1, name: "boltpanel.local", type: "Native", records: 5 },
+      { id: 1, name: "paixpanel.local", type: "Native", records: 5 },
       { id: 2, name: "shopdemo.co.tz", type: "Native", records: 4 },
     ],
     recordsByZone: {
-      "boltpanel.local": [
-        { id: 1, name: "boltpanel.local", type: "A", content: "203.0.113.42", ttl: 300, prio: 0, disabled: false },
-        { id: 2, name: "api.boltpanel.local", type: "A", content: "203.0.113.42", ttl: 300, prio: 0, disabled: false },
-        { id: 3, name: "app.boltpanel.local", type: "A", content: "203.0.113.42", ttl: 300, prio: 0, disabled: false },
-        { id: 4, name: "boltpanel.local", type: "MX", content: "mail.boltpanel.local", ttl: 300, prio: 10, disabled: false },
-        { id: 5, name: "boltpanel.local", type: "TXT", content: "v=spf1 mx a ~all", ttl: 300, prio: 0, disabled: false },
+      "paixpanel.local": [
+        { id: 1, name: "paixpanel.local", type: "A", content: "203.0.113.42", ttl: 300, prio: 0, disabled: false },
+        { id: 2, name: "api.paixpanel.local", type: "A", content: "203.0.113.42", ttl: 300, prio: 0, disabled: false },
+        { id: 3, name: "app.paixpanel.local", type: "A", content: "203.0.113.42", ttl: 300, prio: 0, disabled: false },
+        { id: 4, name: "paixpanel.local", type: "MX", content: "mail.paixpanel.local", ttl: 300, prio: 10, disabled: false },
+        { id: 5, name: "paixpanel.local", type: "TXT", content: "v=spf1 mx a ~all", ttl: 300, prio: 0, disabled: false },
       ],
       "shopdemo.co.tz": [
         { id: 6, name: "shopdemo.co.tz", type: "A", content: "203.0.113.42", ttl: 300, prio: 0, disabled: false },
@@ -170,18 +170,18 @@ function getState(): PreviewState {
     },
     nextRecordId: 10,
     mailDomains: [
-      { id: 1, name: "boltpanel.local", mailboxes: 2, ip_preference: "default" },
+      { id: 1, name: "paixpanel.local", mailboxes: 2, ip_preference: "default" },
       { id: 2, name: "shopdemo.co.tz", mailboxes: 1, ip_preference: "ipv4" },
     ],
     mailboxes: [
-      { id: 1, email: "admin@boltpanel.local", quota_mb: 2048 },
-      { id: 2, email: "ops@boltpanel.local", quota_mb: 1024 },
+      { id: 1, email: "admin@paixpanel.local", quota_mb: 2048 },
+      { id: 2, email: "ops@paixpanel.local", quota_mb: 1024 },
       { id: 3, email: "orders@shopdemo.co.tz", quota_mb: 5120 },
     ],
     nextMailboxId: 4,
     aliases: [
       { id: 1, source: "support@shopdemo.co.tz", destination: "orders@shopdemo.co.tz" },
-      { id: 2, source: "@boltpanel.local", destination: "admin@boltpanel.local" },
+      { id: 2, source: "@paixpanel.local", destination: "admin@paixpanel.local" },
     ],
     nextAliasId: 3,
     mailIpDefault: "ipv4",
@@ -265,8 +265,8 @@ function getState(): PreviewState {
     ],
     services: [
       { unit: "nginx.service", load: "loaded", active: "active", sub: "running", description: "A high performance web server and reverse proxy" },
-      { unit: "vps-panel.service", load: "loaded", active: "active", sub: "running", description: "Bolt Panel Web UI" },
-      { unit: "vps-panel-agent.service", load: "loaded", active: "active", sub: "running", description: "Bolt Panel Privileged Agent" },
+      { unit: "vps-panel.service", load: "loaded", active: "active", sub: "running", description: "Paix Panel Web UI" },
+      { unit: "vps-panel-agent.service", load: "loaded", active: "active", sub: "running", description: "Paix Panel Privileged Agent" },
       { unit: "mariadb.service", load: "loaded", active: "active", sub: "running", description: "MariaDB database server" },
       { unit: "postgresql.service", load: "loaded", active: "active", sub: "running", description: "PostgreSQL RDBMS" },
       { unit: "postfix.service", load: "loaded", active: "active", sub: "running", description: "Postfix Mail Transport Agent" },
@@ -304,7 +304,7 @@ function getState(): PreviewState {
           "Running npm ci --omit=dev...",
           "Running npm run build...",
           "Writing systemd unit vps-app-core-api.service",
-          "Issuing TLS certificate for api.boltpanel.local",
+          "Issuing TLS certificate for api.paixpanel.local",
           "Done: core-api listening on 127.0.0.1:4001",
         ],
       },
@@ -682,7 +682,7 @@ export async function handlePreviewAgentRequest<T>(
     return { name, dkim_status: "active", records_published: true, note: "DKIM & SPF records published", ssl_task_id: null } as T;
   }
   if (m === "GET" && pathname === "/mail/mailboxes") {
-    return { server: "mail.boltpanel.local", mailboxes: s.mailboxes } as T;
+    return { server: "mail.paixpanel.local", mailboxes: s.mailboxes } as T;
   }
   if (m === "POST" && pathname === "/mail/mailboxes") {
     const email = String(b.email ?? "");
@@ -755,12 +755,12 @@ export async function handlePreviewAgentRequest<T>(
   }
   if (m === "GET" && pathname === "/mail/ip-check") {
     return {
-      helo_host: "mail.boltpanel.local",
+      helo_host: "mail.paixpanel.local",
       ipv4: {
         address: "203.0.113.42",
         ready: true,
         checks: [
-          { id: "ptr", label: "Reverse DNS (PTR)", status: "ok", detail: "Matches mail.boltpanel.local" },
+          { id: "ptr", label: "Reverse DNS (PTR)", status: "ok", detail: "Matches mail.paixpanel.local" },
           { id: "port25", label: "Outbound port 25", status: "ok", detail: "Reachable" },
         ],
       },

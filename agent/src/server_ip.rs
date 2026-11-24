@@ -157,7 +157,7 @@ impl Ipv4Facts {
 /// gone a server behind NAT wrote its private address into new records.
 pub async fn ipv4_facts(config_host: &str) -> Ipv4Facts {
     let host = panel_host_now(config_host).await;
-    let named = match parse_ipv4(&host) {
+    let mut named = match parse_ipv4(&host) {
         Some(ip) => vec![ip],
         // The system resolver can take its full timeout when DNS is down.
         None => tokio::time::timeout(
@@ -170,12 +170,35 @@ pub async fn ipv4_facts(config_host: &str) -> Ipv4Facts {
         .map(|addrs| public_ipv4s(addrs.map(|a| a.ip())))
         .unwrap_or_default(),
     };
+    if named.is_empty() {
+        if let Some(ip) = env_public_ipv4().await {
+            named.push(ip);
+        }
+    }
     Ipv4Facts {
         host,
         named,
         interfaces: ipv4_devices().await,
         default_source: default_source_ipv4().await,
     }
+}
+
+async fn env_public_ipv4() -> Option<String> {
+    let raw = match std::env::var("PUBLIC_IP").ok().filter(|v| !v.trim().is_empty()) {
+        Some(v) => v,
+        None => tokio::fs::read_to_string("/etc/vps-panel/.env")
+            .await
+            .unwrap_or_default()
+            .lines()
+            .find_map(|l| l.strip_prefix("PUBLIC_IP="))
+            .map(str::to_string)
+            .unwrap_or_default(),
+    };
+    let ip: Ipv4Addr = raw.trim().parse().ok()?;
+    if is_private_v4(&ip) {
+        return None;
+    }
+    Some(ip.to_string())
 }
 
 /// This server's IPv6: caller-supplied, literal, or the panel hostname as it

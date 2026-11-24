@@ -1005,6 +1005,34 @@ retire_nginx_jails() {
 }
 retire_nginx_jails || true
 
+# On NAT'd servers where interfaces only carry a private IP, detect and record
+# PUBLIC_IP in /etc/vps-panel/.env if not already present so the agent knows
+# its public IPv4 before DNS propagates.
+ensure_public_ip_env() {
+  local env_file=/etc/vps-panel/.env
+  [[ -f "$env_file" ]] || return 0
+  if grep -qE '^PUBLIC_IP=[0-9]+\.' "$env_file"; then
+    return 0
+  fi
+  local pub
+  pub=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 \
+        | grep -vE '^(10|127|172\.(1[6-9]|2[0-9]|3[01])|192\.168|169\.254|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7]))\.' \
+        | head -1 || true)
+  if [[ -z "$pub" ]] && command -v curl >/dev/null 2>&1; then
+    pub=$(curl -4fsSL --max-time 4 https://api.ipify.org 2>/dev/null | tr -d '[:space:]' || true)
+    if ! [[ "$pub" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] \
+       || [[ "$pub" =~ ^(10|127|172\.(1[6-9]|2[0-9]|3[01])|192\.168|169\.254|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7]))\. ]]; then
+      pub=""
+    fi
+  fi
+  if [[ -n "$pub" ]]; then
+    sed -i '/^PUBLIC_IP=$/d' "$env_file"
+    echo "PUBLIC_IP=$pub" >> "$env_file"
+  fi
+  return 0
+}
+ensure_public_ip_env || true
+
 # How often systemd has restarted the unit by itself since its last start.
 unit_restarts() {
   local n

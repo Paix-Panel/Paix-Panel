@@ -2193,14 +2193,14 @@ mod tests {
 
     #[test]
     fn a_plain_host_origin_is_pointed_at_the_deploy_keys_alias() {
-        let origin = "git@github.com:amani-sinkala/vps-panel.git";
+        let origin = "git@github.com:Paix-Panel/Paix-Panel.git";
         let hint = publickey_hint("/root/vps-panel-src", origin, ROOT_CONFIG, REFUSED).unwrap();
         assert!(hint.contains("core.sshCommand set in the clone is ignored"), "{hint}");
         assert!(hint.contains("default-named ones"), "{hint}");
         assert!(
             hint.ends_with(
                 "\n\ngit -C /root/vps-panel-src remote set-url origin \
-                 git@github_vps_panel:amani-sinkala/vps-panel.git"
+                 git@github_vps_panel:Paix-Panel/Paix-Panel.git"
             ),
             "{hint}"
         );
@@ -2222,7 +2222,7 @@ mod tests {
 
     #[test]
     fn without_a_block_for_the_host_the_hint_adds_one() {
-        let origin = "git@github.com:amani-sinkala/vps-panel.git";
+        let origin = "git@github.com:Paix-Panel/Paix-Panel.git";
         let hint = publickey_hint("/root/vps-panel-src", origin, "", REFUSED).unwrap();
         assert!(
             hint.ends_with(
@@ -2230,7 +2230,7 @@ mod tests {
                  '  IdentityFile ~/.ssh/github_vps_panel' '  IdentitiesOnly yes' \
                  >> /root/.ssh/config\n\
                  git -C /root/vps-panel-src remote set-url origin \
-                 git@github_vps_panel:amani-sinkala/vps-panel.git"
+                 git@github_vps_panel:Paix-Panel/Paix-Panel.git"
             ),
             "{hint}"
         );
@@ -2248,12 +2248,12 @@ mod tests {
 
     #[test]
     fn an_alias_origin_means_its_key_is_not_on_the_repository() {
-        let origin = "git@github_vps_panel:amani-sinkala/vps-panel.git";
+        let origin = "git@github_vps_panel:Paix-Panel/Paix-Panel.git";
         let hint = publickey_hint("/root/vps-panel-src", origin, ROOT_CONFIG, REFUSED).unwrap();
         assert!(
             hint.contains(
                 "github.com refused the key behind it (~/.ssh/github_vps_panel): that key is not \
-                 authorized on amani-sinkala/vps-panel"
+                 authorized on Paix-Panel/Paix-Panel"
             ),
             "{hint}"
         );

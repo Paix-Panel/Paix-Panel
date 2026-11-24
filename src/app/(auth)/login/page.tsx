@@ -19,7 +19,7 @@ export default function LoginPage() {
       <div className={styles.card}>
         <div className={styles.brand}>
           <BoltMark size={48} />
-          <h1 className={styles.title}>Bolt Panel</h1>
+          <h1 className={styles.title}>Paix Panel</h1>
         </div>
         <p className={styles.subtitle}>Sign in to manage your server.</p>
         <LoginForm

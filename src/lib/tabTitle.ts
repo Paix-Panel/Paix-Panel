@@ -5,7 +5,7 @@
  * the Appearance form, its server action and the root layout share it.
  */
 export const TAB_TITLE_KEY = "panel.tab_title";
-export const DEFAULT_TAB_TITLE = "Bolt Panel";
+export const DEFAULT_TAB_TITLE = "Paix Panel";
 export const MAX_TAB_TITLE = 60;
 
 /** The name to show for a stored value. */

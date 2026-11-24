@@ -3,7 +3,7 @@
  * Everything from --bg down to --shadow-glow is DERIVED from a single accent
  * colour and is overridden per-install by an inline style on <html> (see
  * src/lib/theme.ts + src/app/layout.tsx). The values below are the shipped
- * "Bolt Purple" default; `deriveTheme("#b537f2")` reproduces every one of them
+ * "Paix Purple" default; `deriveTheme("#b537f2")` reproduces every one of them
  * byte-for-byte, so this block and the theme module cannot drift.
  *
  * Keep it here anyway: it is what renders if the inline style is ever absent

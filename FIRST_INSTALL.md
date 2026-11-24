@@ -1,6 +1,6 @@
-# Bolt Panel - first install
+# Paix Panel - first install
 
-You need a fresh **Ubuntu 24.04** server you can reach as root over SSH (install.sh refuses any other release). The code comes from the public repo [amani-sinkala/vps-panel](https://github.com/amani-sinkala/vps-panel), so no GitHub key is needed.
+You need a fresh **Ubuntu 24.04** server you can reach as root over SSH (install.sh refuses any other release). The code comes from the public repo [Paix-Panel/Paix-Panel](https://github.com/Paix-Panel/Paix-Panel), so no GitHub key is needed.
 
 Log in from your PC:
 
@@ -24,17 +24,17 @@ There is no Node.js step: install.sh installs Node 22 itself.
 
 ---
 
-# 2. Clone Bolt Panel
+# 2. Clone Paix Panel
 
 ```bash
-git clone https://github.com/amani-sinkala/vps-panel.git /root/vps-panel-src
+git clone https://github.com/Paix-Panel/Paix-Panel.git /root/vps-panel-src
 ```
 
 Keep it at `/root/vps-panel-src`: the panel updates itself from this clone.
 
 ---
 
-# 3. Install and run Bolt Panel
+# 3. Install and run Paix Panel
 
 ```bash
 bash /root/vps-panel-src/scripts/install.sh

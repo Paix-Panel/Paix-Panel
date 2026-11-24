@@ -1,8 +1,8 @@
 import "server-only";
 import fs from "node:fs";
 
-const PREVIEW_JWT_FALLBACK = "bolt-panel-preview-jwt-secret-key-2026";
-const PREVIEW_AGENT_FALLBACK = "bolt-panel-preview-agent-token-2026";
+const PREVIEW_JWT_FALLBACK = "paix-panel-preview-jwt-secret-key-2026";
+const PREVIEW_AGENT_FALLBACK = "paix-panel-preview-agent-token-2026";
 
 function isPreviewRuntime(): boolean {
   if (process.env.PREVIEW_MOCK_AGENT === "1" || process.env.ALLOW_PREVIEW_IFRAME === "1") {
@@ -43,16 +43,16 @@ export const config = {
   // Panel host can be empty in "IP-only" mode (operator hasn't picked a real
   // FQDN yet). Don't throw — let callers decide whether they need a hostname.
   get panelHost(): string {
-    return optional("PANEL_HOST", isPreviewRuntime() ? "vps.boltpanel.local" : "");
+    return optional("PANEL_HOST", isPreviewRuntime() ? "vps.paixpanel.local" : "");
   },
   get cookieSecure(): boolean {
     return optional("COOKIE_SECURE", "1") !== "0";
   },
   get bootstrapEmail(): string | null {
-    return process.env.ADMIN_EMAIL ?? (isPreviewRuntime() ? "admin@boltpanel.local" : null);
+    return process.env.ADMIN_EMAIL ?? (isPreviewRuntime() ? "admin@paixpanel.local" : null);
   },
   get bootstrapPassword(): string | null {
-    return process.env.ADMIN_INITIAL_PASSWORD ?? (isPreviewRuntime() ? "BoltPanelDemo!2026" : null);
+    return process.env.ADMIN_INITIAL_PASSWORD ?? (isPreviewRuntime() ? "PaixPanelDemo!2026" : null);
   },
   get isPreviewMock(): boolean {
     if (process.env.PREVIEW_MOCK_AGENT === "1") return true;

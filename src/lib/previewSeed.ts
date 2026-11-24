@@ -23,10 +23,10 @@ export function seedPreviewDb(handle: Database.Database): void {
       .run("panel.timezone", "Africa/Nairobi");
     handle
       .prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`)
-      .run("panel.acme_email", "admin@boltpanel.local");
+      .run("panel.acme_email", "admin@paixpanel.local");
     handle
       .prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`)
-      .run("dns.ns_pair", "ns1.boltpanel.local,ns2.boltpanel.local");
+      .run("dns.ns_pair", "ns1.paixpanel.local,ns2.paixpanel.local");
     handle
       .prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`)
       .run("panel.preview_seeded", "1");
@@ -44,17 +44,17 @@ export function seedPreviewDb(handle: Database.Database): void {
       .prepare(
         `INSERT OR IGNORE INTO domains (name, dnssec) VALUES (?, 1), (?, 0)`,
       )
-      .run("boltpanel.local", "shopdemo.co.tz");
+      .run("paixpanel.local", "shopdemo.co.tz");
 
     handle
       .prepare(
         `INSERT OR IGNORE INTO sites
           (domain, mode, upstream_port, folder_path, force_www_redirect, ssl_requested, ssl_issued_at)
          VALUES
-          ('api.boltpanel.local', 'port', 4001, NULL, 0, 1, datetime('now', '-12 days')),
-          ('app.boltpanel.local', 'port', 4002, NULL, 1, 1, datetime('now', '-25 days')),
+          ('api.paixpanel.local', 'port', 4001, NULL, 0, 1, datetime('now', '-12 days')),
+          ('app.paixpanel.local', 'port', 4002, NULL, 1, 1, datetime('now', '-25 days')),
           ('shopdemo.co.tz', 'port', 4003, NULL, 1, 1, datetime('now', '-5 days')),
-          ('docs.boltpanel.local', 'folder', NULL, '/var/www/docs', 0, 1, datetime('now', '-18 days'))`,
+          ('docs.paixpanel.local', 'folder', NULL, '/var/www/docs', 0, 1, datetime('now', '-18 days'))`,
       )
       .run();
 
@@ -63,8 +63,8 @@ export function seedPreviewDb(handle: Database.Database): void {
         `INSERT OR IGNORE INTO apps
           (name, source_dir, port, subdomain, runtime, entrypoint, ssl_enabled, repo_url, folder_id)
          VALUES
-          ('core-api', '/srv/apps/core-api', 4001, 'api.boltpanel.local', 'node', 'npm start', 1, 'https://github.com/acme/core-api.git', ?),
-          ('web-storefront', '/srv/apps/web-storefront', 4002, 'app.boltpanel.local', 'node', 'npm start', 1, 'https://github.com/acme/storefront.git', ?),
+          ('core-api', '/srv/apps/core-api', 4001, 'api.paixpanel.local', 'node', 'npm start', 1, 'https://github.com/acme/core-api.git', ?),
+          ('web-storefront', '/srv/apps/web-storefront', 4002, 'app.paixpanel.local', 'node', 'npm start', 1, 'https://github.com/acme/storefront.git', ?),
           ('analytics-ui', '', 4003, 'shopdemo.co.tz', 'docker', '', 1, NULL, ?)`,
       )
       .run(prodFolderId, prodFolderId, toolsFolderId);

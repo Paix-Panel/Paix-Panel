@@ -359,7 +359,7 @@ export default async function SettingsPage() {
                       The name browsers show for this panel in tabs, bookmarks and history, handy
                       for telling your servers apart. Pages with a title of their own put it in
                       front, e.g. <span className={styles.code}>Sign in - {tabTitleOrDefault(tabTitle)}</span>.
-                      The icon is the theme&apos;s bolt in its colours, so the preview follows the
+                      The icon is the panel&apos;s mark in its colours, so the preview follows the
                       theme above, saved or only previewed. Leave the name empty for{" "}
                       <span className={styles.code}>{DEFAULT_TAB_TITLE}</span>.
                     </p>

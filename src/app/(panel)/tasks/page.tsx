@@ -1,13 +1,13 @@
 import Link from "next/link";
-import { getPanelTimezone } from "@/lib/audit";
+import { resolvePanelTimezone } from "@/lib/audit";
 import {
-  formatTaskTs,
   listTaskDays,
   listTasksForDay,
   todayForTasks,
 } from "@/lib/tasksDb";
 import Table from "@/components/Table/Table";
 import StatusBadge from "@/components/StatusBadge/StatusBadge";
+import LocalTime from "@/components/LocalTime/LocalTime";
 import styles from "@/components/page.module.css";
 
 export const dynamic = "force-dynamic";
@@ -34,20 +34,17 @@ export default async function TasksPage({
   searchParams: Promise<{ day?: string }>;
 }) {
   const sp = await searchParams;
-  const tz = getPanelTimezone();
-  const today = todayForTasks();
+  const tz = await resolvePanelTimezone();
+  const today = todayForTasks(tz);
   const requestedDay = sp.day && DATE_RE.test(sp.day) ? sp.day : null;
 
-  const days = listTaskDays(); // newest -> oldest
+  const days = listTaskDays(tz); // newest -> oldest
   const newestWithTasks = days[0] ?? null;
   const oldestWithTasks = days[days.length - 1] ?? null;
 
-  // Default to the newest day that has tasks; fall back to today on a fresh
-  // install with no tasks yet. Clamp pasted future URLs to today.
   let currentDay = requestedDay ?? newestWithTasks ?? today;
   if (currentDay > today) currentDay = today;
 
-  // Prev = older day with tasks.
   let prevDay: string | null = null;
   for (const d of days) {
     if (d < currentDay) {
@@ -56,7 +53,6 @@ export default async function TasksPage({
     }
   }
 
-  // Next = newer day with tasks, capped at today.
   let nextDay: string | null = null;
   for (let i = days.length - 1; i >= 0; i--) {
     if (days[i] > currentDay) {
@@ -66,7 +62,7 @@ export default async function TasksPage({
   }
   if (nextDay && nextDay > today) nextDay = null;
 
-  const rows = listTasksForDay(currentDay);
+  const rows = listTasksForDay(currentDay, 2000, tz);
   const isToday = currentDay === today;
   const hasTasksThisDay = rows.length > 0;
 
@@ -163,12 +159,10 @@ export default async function TasksPage({
             ),
             status: <StatusBadge text={t.status} />,
             started: (
-              <span className={styles.muted}>{formatTaskTs(t.started_at)}</span>
+              <LocalTime value={t.started_at} className={styles.muted} />
             ),
             finished: (
-              <span className={styles.muted}>
-                {formatTaskTs(t.finished_at)}
-              </span>
+              <LocalTime value={t.finished_at} className={styles.muted} />
             ),
           }))}
           empty="No tasks."

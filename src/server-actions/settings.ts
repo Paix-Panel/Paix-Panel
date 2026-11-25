@@ -95,14 +95,16 @@ export async function setPanelTimezoneAction(
   if (!tz) {
     return { ok: false, error: "timezone is required" };
   }
-  try {
-    // Throws RangeError if the runtime doesn't recognize the IANA name.
-    new Intl.DateTimeFormat("en", { timeZone: tz });
-  } catch {
-    return {
-      ok: false,
-      error: `unknown timezone "${tz}". Use an IANA name like "Europe/Berlin", "America/New_York", or "UTC".`,
-    };
+  if (tz !== "auto") {
+    try {
+      // Throws RangeError if the runtime doesn't recognize the IANA name.
+      new Intl.DateTimeFormat("en", { timeZone: tz });
+    } catch {
+      return {
+        ok: false,
+        error: `unknown timezone "${tz}". Use "auto" or an IANA name like "Africa/Dar_es_Salaam", "Europe/Berlin", or "UTC".`,
+      };
+    }
   }
   db()
     .prepare(
@@ -117,8 +119,6 @@ export async function setPanelTimezoneAction(
     result: "ok",
     message: tz,
   });
-  // Topbar and audit page both read this on render; revalidate broadly so
-  // the new tz lights up everywhere without a hard refresh.
   revalidatePath("/", "layout");
   return { ok: true };
 }

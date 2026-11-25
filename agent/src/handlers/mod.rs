@@ -23,6 +23,7 @@ pub mod privacy;
 pub mod privacy_subject;
 pub mod quick_install;
 pub mod redirects;
+pub mod security;
 pub mod sites;
 pub mod ssh;
 pub mod ssl;
@@ -32,6 +33,7 @@ pub mod systemd;
 pub mod tailscale;
 pub mod terminal;
 pub mod tasks;
+pub mod webmail;
 
 use crate::state::AppState;
 use axum::{
@@ -126,6 +128,12 @@ pub fn router(state: AppState) -> Router {
             patch(mail::update_mailbox).delete(mail::delete_mailbox),
         )
         .route("/mail/mailboxes/{email}/usage", get(mail::mailbox_usage))
+        // Built-in Webmail (direct Maildir + sendmail, no Roundcube dependency)
+        .route("/mail/webmail/{email}/folders", get(webmail::folders))
+        .route("/mail/webmail/{email}/messages", get(webmail::list_messages))
+        .route("/mail/webmail/{email}/messages/{id}", get(webmail::read_message))
+        .route("/mail/webmail/{email}/send", post(webmail::send_message))
+        .route("/mail/webmail/{email}/action", post(webmail::message_action))
         // Forwarders and catch-alls (rows Postfix's virtual_alias_maps reads).
         .route("/mail/aliases", post(mail_aliases::create).get(mail_aliases::list))
         .route("/mail/aliases/{id}", delete(mail_aliases::delete))
@@ -227,6 +235,10 @@ pub fn router(state: AppState) -> Router {
             get(ssh::get_ssh_config_file).put(ssh::put_ssh_config_file),
         )
         .route("/ssh/config", get(ssh::config_get).patch(ssh::config_set))
+        // Security & SSH intrusion monitor
+        .route("/security/overview", get(security::overview))
+        .route("/security/ban-ip", post(security::ban_ip))
+        .route("/security/unban-ip", post(security::unban_ip))
         // Cron
         .route("/cron/jobs", get(cron::list).post(cron::create))
         .route("/cron/jobs/{id}", delete(cron::delete))

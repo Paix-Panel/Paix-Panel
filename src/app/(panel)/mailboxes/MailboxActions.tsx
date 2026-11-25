@@ -14,15 +14,9 @@ type UpdateResult =
   | { ok: true; data?: { password?: string } }
   | { ok: false; error: string };
 
-/** Why webmail can't open yet: Roundcube is not installed, or it has no
- *  public domain. null when a domain proxies to it. */
-export type WebmailOff = "install" | "domain" | null;
-
 type Props = {
   email: string;
   server: string;
-  webmailUrl: string | null;
-  webmailOff: WebmailOff;
   currentQuotaMb: number;
   currentUsageMb: number;
   updateAction: (prev: UpdateResult | null, fd: FormData) => Promise<UpdateResult>;
@@ -47,8 +41,6 @@ type View = "menu" | "edit" | "delete";
 export default function MailboxActions({
   email,
   server,
-  webmailUrl,
-  webmailOff,
   currentQuotaMb,
   currentUsageMb,
   updateAction,
@@ -117,13 +109,8 @@ export default function MailboxActions({
   }
 
   function openMailbox() {
-    if (!webmailUrl) return;
-    window.open(
-      `${webmailUrl}/?_user=${encodeURIComponent(email)}`,
-      "_blank",
-      "noopener",
-    );
     closeAll();
+    router.push(`/mailboxes/webmail?account=${encodeURIComponent(email)}`);
   }
 
   function onDeleteConfirm() {
@@ -190,16 +177,9 @@ export default function MailboxActions({
               type="button"
               className={local.menuBtn}
               onClick={openMailbox}
-              disabled={!webmailUrl}
             >
-              <span className={local.menuLabel}>Open mailbox</span>
-              <span className={local.menuHint}>
-                {webmailUrl
-                  ? "Roundcube webmail"
-                  : webmailOff === "install"
-                    ? "Off: install Roundcube under Apps first"
-                    : "Off: give Roundcube a public domain first"}
-              </span>
+              <span className={local.menuLabel}>Open Webmail</span>
+              <span className={local.menuHint}>Read &amp; send email in browser</span>
             </button>
             <button
               type="button"

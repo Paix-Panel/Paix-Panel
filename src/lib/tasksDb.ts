@@ -76,8 +76,7 @@ function tzDayToRfc3339Range(
  * way listAuditDays does it. Grouping by substr(started_at, 1, 10) read the
  * whole table, build logs included, once per date on each visit to /tasks.
  */
-export function listTaskDays(): string[] {
-  const tz = getPanelTimezone();
+export function listTaskDays(tz = getPanelTimezone()): string[] {
   const firstFrom = db().prepare(`SELECT MIN(started_at) AS ts FROM tasks WHERE started_at >= ?`);
   const lastBefore = db().prepare(`SELECT MAX(started_at) AS ts FROM tasks WHERE started_at < ?`);
   const tzDays = new Set<string>();
@@ -93,8 +92,8 @@ export function listTaskDays(): string[] {
 }
 
 /** Tasks started within the given local-tz calendar day. Newest first. */
-export function listTasksForDay(day: string, limit = 2000): TaskRow[] {
-  const { startRfc, endRfc } = tzDayToRfc3339Range(day, getPanelTimezone());
+export function listTasksForDay(day: string, limit = 2000, tz = getPanelTimezone()): TaskRow[] {
+  const { startRfc, endRfc } = tzDayToRfc3339Range(day, tz);
   return db()
     .prepare(
       `SELECT id, kind, status, started_at, finished_at
@@ -107,17 +106,17 @@ export function listTasksForDay(day: string, limit = 2000): TaskRow[] {
 }
 
 /** Today's tz-day as "YYYY-MM-DD". Re-exported convenience. */
-export function todayForTasks(): string {
-  return todayInTz();
+export function todayForTasks(tz = getPanelTimezone()): string {
+  return todayInTz(tz);
 }
 
 /** RFC3339 UTC → "DD/MM/YYYY HH:MM:SS" in the configured tz. */
-export function formatTaskTs(rfcTs: string | null): string {
+export function formatTaskTs(rfcTs: string | null, tz = getPanelTimezone()): string {
   if (!rfcTs) return "-";
   const d = new Date(rfcTs);
   if (Number.isNaN(d.getTime())) return rfcTs;
   const fmt = new Intl.DateTimeFormat("en-GB", {
-    timeZone: getPanelTimezone(),
+    timeZone: tz,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

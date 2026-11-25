@@ -20,7 +20,7 @@ export function seedPreviewDb(handle: Database.Database): void {
       .run("panel.setup_complete", "true");
     handle
       .prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`)
-      .run("panel.timezone", "Africa/Nairobi");
+      .run("panel.timezone", "auto");
     handle
       .prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)`)
       .run("panel.acme_email", "admin@paixpanel.local");

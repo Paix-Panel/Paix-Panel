@@ -21,7 +21,7 @@ import MailboxForm from "./MailboxForm";
 import MailServerInfo from "./MailServerInfo";
 import CopyMailboxConfig from "./CopyMailboxConfig";
 import EditMailboxRow from "./EditMailboxRow";
-import MailboxActions, { type WebmailOff } from "./MailboxActions";
+import MailboxActions from "./MailboxActions";
 import MailboxTable, { type MailboxRow } from "./MailboxTable";
 import local from "./mailboxes.module.css";
 
@@ -71,10 +71,6 @@ export default async function MailboxesPage() {
   );
   const bytesByEmail = new Map(usageEntries);
 
-  // Roundcube runs on 127.0.0.1:<port> and is reached publicly through whatever
-  // site the operator mapped to that port (e.g. webmail.<panel-host>). Without
-  // one the per-row icon stays visible but off, and a notice above the table
-  // says what is missing.
   const roundcube = recipes?.find((r) => r.slug === "roundcube");
   const roundcubePort = roundcube?.default_port ?? 8082;
   const webmailSite = db()
@@ -83,17 +79,6 @@ export default async function MailboxesPage() {
     )
     .get(roundcubePort) as { domain: string } | undefined;
   const webmailUrl = webmailSite ? `https://${webmailSite.domain}` : null;
-  // An unreachable agent leaves `roundcube` unknown: ask for the domain then,
-  // the one missing piece the panel can see for itself.
-  const webmailOff: WebmailOff = webmailUrl
-    ? null
-    : roundcube && !roundcube.installed
-      ? "install"
-      : "domain";
-  const webmailOffTitle =
-    webmailOff === "install"
-      ? "Webmail is off: Roundcube is not installed"
-      : "Webmail is off: Roundcube has no public domain yet";
 
   const rootDisk =
     sysinfo?.disk.find((d) => d.mount === "/var/mail") ??
@@ -105,14 +90,73 @@ export default async function MailboxesPage() {
     <div>
       <div className={styles.head}>
         <div>
-          <h1 className={styles.title}>Mailboxes</h1>
+          <h1 className={styles.title}>Mailboxes &amp; Mail Panel</h1>
           <div className={styles.subtitle}>
-            Postfix + Dovecot, virtual users in MariaDB. DKIM via Rspamd.
+            Postfix + Dovecot, virtual users in MariaDB, built-in Webmail, and DKIM via Rspamd.
           </div>
+        </div>
+        <div className={styles.actions}>
+          <Link
+            href={
+              mailboxes[0]
+                ? `/mailboxes/webmail?account=${encodeURIComponent(mailboxes[0].email)}`
+                : "/mailboxes/webmail"
+            }
+            className={styles.btn}
+            style={{ textDecoration: "none" }}
+          >
+            Open Webmail
+          </Link>
+          {webmailUrl && (
+            <a
+              href={webmailUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={styles.btnGhost}
+              style={{ textDecoration: "none" }}
+            >
+              Open Roundcube
+            </a>
+          )}
         </div>
       </div>
 
       <MailServerInfo server={server} mailIp={mailIp} />
+
+      {mailDomains.length > 0 && (
+        <div className={styles.section}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 12,
+              flexWrap: "wrap",
+              marginBottom: 10,
+            }}
+          >
+            <h2 className={styles.sectionTitle} style={{ margin: 0 }}>
+              Mail domains
+            </h2>
+            <Link href="/domains" className={styles.btnGhost} style={{ textDecoration: "none" }}>
+              Manage DNS &amp; SSL
+            </Link>
+          </div>
+          <Table
+            columns={[
+              { key: "name", label: "Domain" },
+              { key: "mailboxes", label: "Mailboxes", width: "110px" },
+              { key: "ip_preference", label: "Outbound IP", width: "130px" },
+            ]}
+            rowKey={(_, i) => mailDomains[i].id}
+            rows={mailDomains.map((d) => ({
+              name: <span className={styles.code}>{d.name}</span>,
+              mailboxes: <span style={{ fontVariantNumeric: "tabular-nums" }}>{d.mailboxes}</span>,
+              ip_preference: <StatusBadge text={d.ip_preference || "default"} tone="muted" />,
+            }))}
+          />
+        </div>
+      )}
 
       <div className={styles.section}>
         <h2 className={styles.sectionTitle}>Add mailbox</h2>
@@ -122,30 +166,6 @@ export default async function MailboxesPage() {
           diskFreeBytes={rootDisk?.free_bytes ?? null}
         />
       </div>
-
-      {webmailOff && mailboxes.length > 0 && (
-        <div className={local.webmailNotice}>
-          <span>
-            {webmailOff === "install" ? (
-              <>
-                Webmail is off. Install Roundcube under Apps, then give it a public
-                domain to open these mailboxes in the browser.
-              </>
-            ) : (
-              <>
-                Webmail is off. Roundcube has no public domain yet: add a domain that
-                proxies to port {roundcubePort} to open these mailboxes in the browser.
-              </>
-            )}
-          </span>
-          <Link
-            href={webmailOff === "install" ? "/apps" : `/domains?port=${roundcubePort}`}
-            className={styles.btnGhost}
-          >
-            {webmailOff === "install" ? "Go to Apps" : `Add domain for port ${roundcubePort}`}
-          </Link>
-        </div>
-      )}
 
       <MailboxTable
         rows={mailboxes.map((m): MailboxRow => {
@@ -171,33 +191,21 @@ export default async function MailboxesPage() {
               actions: (
                 <>
                   <div className={local.desktopActions}>
-                    {webmailUrl ? (
-                      <a
-                        href={`${webmailUrl}/?_user=${encodeURIComponent(m.email)}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={styles.btnGhost}
-                        title={`Open Roundcube for ${m.email}`}
-                        aria-label={`Open Roundcube for ${m.email}`}
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          padding: "6px 8px",
-                        }}
-                      >
-                        <EmailIcon />
-                      </a>
-                    ) : (
-                      <span
-                        className={local.webmailOff}
-                        role="img"
-                        title={webmailOffTitle}
-                        aria-label={webmailOffTitle}
-                      >
-                        <EmailIcon />
-                      </span>
-                    )}
+                    <Link
+                      href={`/mailboxes/webmail?account=${encodeURIComponent(m.email)}`}
+                      className={styles.btnGhost}
+                      title={`Open Webmail for ${m.email}`}
+                      aria-label={`Open Webmail for ${m.email}`}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: "6px 8px",
+                        textDecoration: "none",
+                      }}
+                    >
+                      <EmailIcon />
+                    </Link>
                     <EditMailboxRow
                       email={m.email}
                       currentQuotaMb={m.quota_mb}
@@ -223,8 +231,6 @@ export default async function MailboxesPage() {
                   <MailboxActions
                     email={m.email}
                     server={server}
-                    webmailUrl={webmailUrl}
-                    webmailOff={webmailOff}
                     currentQuotaMb={m.quota_mb}
                     currentUsageMb={usedMbCeil}
                     updateAction={updateMailboxAction.bind(null, m.email)}
@@ -236,16 +242,6 @@ export default async function MailboxesPage() {
           };
         })}
       />
-
-      {webmailUrl && mailboxes.length > 0 && (
-        <p className={local.muted} style={{ margin: "10px 0 16px" }}>
-          Out of Office replies and mail filters: each person sets their own in{" "}
-          <a href={webmailUrl} target="_blank" rel="noopener noreferrer">
-            webmail
-          </a>
-          , under Settings.
-        </p>
-      )}
 
       <div className={styles.section}>
         <h2 className={styles.sectionTitle}>Forwarders</h2>

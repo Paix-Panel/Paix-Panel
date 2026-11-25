@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import ConfirmSubmitButton from "@/components/ConfirmSubmitButton/ConfirmSubmitButton";
 import ActionForm from "@/components/ActionForm/ActionForm";
+import LocalTime from "@/components/LocalTime/LocalTime";
 import styles from "@/components/page.module.css";
 import localStyles from "./jails.module.css";
 import type { JailRow, FailedByIp } from "@/lib/agent";
@@ -190,7 +191,7 @@ function FailedTable({ state }: { state: FailedState }) {
           <tr key={r.ip}>
             <td><span className={styles.code}>{r.ip}</span></td>
             <td>{r.attempts}</td>
-            <td><span className={styles.muted}>{r.last_seen}</span></td>
+            <td><LocalTime value={r.last_seen} className={styles.muted} /></td>
           </tr>
         ))}
       </tbody>

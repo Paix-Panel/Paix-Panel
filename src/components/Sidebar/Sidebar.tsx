@@ -46,6 +46,7 @@ const SECTIONS: { group: string; items: NavItem[] }[] = [
     group: "Mail & data",
     items: [
       { href: "/mailboxes", label: "Mailboxes", icon: "mailboxes" },
+      { href: "/mailboxes/webmail", label: "Webmail", icon: "webmail" },
       { href: "/databases", label: "Databases", icon: "databases" },
       { href: "/backups", label: "Backups", icon: "backups" },
     ],
@@ -58,6 +59,7 @@ const SECTIONS: { group: string; items: NavItem[] }[] = [
       { href: "/tasks", label: "Tasks", icon: "tasks" },
       { href: "/audit", label: "Audit log", icon: "audit" },
       { href: "/firewall", label: "Firewall & bans", icon: "firewall" },
+      { href: "/security", label: "Security & SSH", icon: "security" },
     ],
   },
   {

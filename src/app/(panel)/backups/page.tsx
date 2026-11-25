@@ -1,5 +1,6 @@
 import { agent } from "@/lib/agent";
 import Table from "@/components/Table/Table";
+import LocalTime from "@/components/LocalTime/LocalTime";
 import styles from "@/components/page.module.css";
 import { runBackupAction } from "@/server-actions/backups";
 import BackupRunner from "./BackupRunner";
@@ -51,7 +52,7 @@ export default async function BackupsPage() {
         ]}
         rows={snapshots.map((s) => ({
           id: <span className={styles.code}>{s.id}</span>,
-          time: <span className={styles.muted}>{s.time}</span>,
+          time: <LocalTime value={s.time} className={styles.muted} />,
           paths: <span className={styles.code}>{s.paths.join(", ")}</span>,
           host: s.hostname,
         }))}

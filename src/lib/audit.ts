@@ -1,4 +1,5 @@
 import "server-only";
+import { cookies } from "next/headers";
 import { db } from "./db";
 import { getSetting } from "./settings";
 import { createHash } from "node:crypto";
@@ -71,19 +72,46 @@ export function listAudit(limit = 200): AuditRow[] {
 // timezone — a 22:30 UTC event in summer is already 00:30 the next day in
 // Berlin and grouping by UTC date would put it in the wrong bucket.
 
-// The display/grouping timezone is operator-configurable via Settings →
-// Panel timezone. Default UTC so a fresh install with no setting still
-// renders cleanly. Read at call-time (not module-load) so a settings save
-// takes effect on the next request without restarting the panel.
-export function getPanelTimezone(): string {
-  const tz = getSetting("panel.timezone", "UTC");
+// The display/grouping timezone defaults to "auto" (follow the browser's
+// local timezone via the `paix_tz` cookie), or uses any explicit IANA zone
+// saved under Settings -> Panel timezone.
+export function isValidTimeZone(tz: string): boolean {
+  if (!tz || tz === "auto") return false;
   try {
     new Intl.DateTimeFormat("en", { timeZone: tz });
-    return tz;
+    return true;
   } catch {
-    // Setting got corrupted somehow — fall back to UTC and keep rendering.
-    return "UTC";
+    return false;
   }
+}
+
+export function getPanelTimezoneMode(): string {
+  const raw = getSetting("panel.timezone", "auto").trim();
+  if (!raw || raw === "auto") return "auto";
+  return isValidTimeZone(raw) ? raw : "auto";
+}
+
+export function getPanelTimezone(cookieTz?: string | null): string {
+  const mode = getPanelTimezoneMode();
+  if (mode !== "auto") return mode;
+  if (cookieTz && isValidTimeZone(cookieTz)) return cookieTz;
+  return "UTC";
+}
+
+export async function resolvePanelTimezone(): Promise<string> {
+  const mode = getPanelTimezoneMode();
+  if (mode !== "auto") return mode;
+  try {
+    const store = await cookies();
+    const rawCookie = store.get("paix_tz")?.value;
+    if (rawCookie) {
+      const decoded = decodeURIComponent(rawCookie);
+      if (isValidTimeZone(decoded)) return decoded;
+    }
+  } catch {
+    // Outside request context — fall back cleanly.
+  }
+  return "UTC";
 }
 
 function dayFmt(tz: string): Intl.DateTimeFormat {
@@ -113,8 +141,8 @@ function toTzDay(d: Date, tz: string): string {
 }
 
 /** Today in the configured tz as "YYYY-MM-DD". */
-export function todayInTz(): string {
-  return toTzDay(new Date(), getPanelTimezone());
+export function todayInTz(tz = getPanelTimezone()): string {
+  return toTzDay(new Date(), tz);
 }
 
 /** Resolve the configured tz's UTC offset (in minutes) for a given instant. */
@@ -185,8 +213,7 @@ export function tzMidnightUtcMs(day: string, tz: string): number {
  * substr(ts, 1, 10) read the whole table once for the list of dates and once
  * more for every date in it, on each visit to /audit.
  */
-export function listAuditDays(): string[] {
-  const tz = getPanelTimezone();
+export function listAuditDays(tz = getPanelTimezone()): string[] {
   const firstFrom = db().prepare(`SELECT MIN(ts) AS ts FROM audit_log WHERE ts >= ?`);
   const lastBefore = db().prepare(`SELECT MAX(ts) AS ts FROM audit_log WHERE ts < ?`);
   const tzDays = new Set<string>();
@@ -203,8 +230,8 @@ export function listAuditDays(): string[] {
   return [...tzDays].sort().reverse();
 }
 
-export function listAuditForDay(day: string, limit = 2000): AuditRow[] {
-  const { startUtc, endUtc } = tzDayToUtcRange(day, getPanelTimezone());
+export function listAuditForDay(day: string, limit = 2000, tz = getPanelTimezone()): AuditRow[] {
+  const { startUtc, endUtc } = tzDayToUtcRange(day, tz);
   return db()
     .prepare(
       `${AUDIT_SELECT}
@@ -216,9 +243,9 @@ export function listAuditForDay(day: string, limit = 2000): AuditRow[] {
 }
 
 /** "YYYY-MM-DD HH:MM:SS" UTC → "DD/MM/YYYY HH:MM:SS" in the configured tz. */
-export function formatAuditTs(utcTs: string): string {
+export function formatAuditTs(utcTs: string, tz = getPanelTimezone()): string {
   const fmt = new Intl.DateTimeFormat("en-GB", {
-    timeZone: getPanelTimezone(),
+    timeZone: tz,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

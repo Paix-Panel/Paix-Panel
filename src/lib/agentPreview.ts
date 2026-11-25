@@ -21,14 +21,18 @@ import type {
   PgRole,
   QuickInstallRecipe,
   RecordRow,
+  SecurityOverview,
   ServiceRow,
   SiteListEntry,
   Snapshot,
+  SshActiveSession,
+  SshLogEvent,
   SshServerConfig,
   SysInfo,
   SystemUserRow,
   TaskState,
   TrashRow,
+  WebmailMessageDetail,
   ZoneRow,
 } from "./agent";
 
@@ -69,6 +73,10 @@ type PreviewState = {
   swappiness: number;
   trash: TrashRow[];
   filesByRoot: Record<string, Record<string, FileEntry[]>>;
+  webmailMessages: Record<string, WebmailMessageDetail[]>;
+  sshLogs: SshLogEvent[];
+  sshSessions: SshActiveSession[];
+  manualBannedIps: string[];
 };
 
 const g = globalThis as unknown as { __boltPreviewState?: PreviewState };
@@ -349,6 +357,120 @@ function getState(): PreviewState {
         ],
       },
     },
+    webmailMessages: {
+      "admin@paixpanel.local": [
+        {
+          id: "msg-101",
+          folder: "INBOX",
+          from: "Let's Encrypt Expiry Bot <expiry@letsencrypt.org>",
+          to: "admin@paixpanel.local",
+          cc: "",
+          subject: "TLS certificate issued for paixpanel.local",
+          date: new Date(Date.now() - 42 * 60 * 1000).toISOString(),
+          message_id: "<cert-101@letsencrypt.org>",
+          text_body: "Your ACME certificate for paixpanel.local and mail.paixpanel.local was renewed automatically and installed on nginx, Postfix, and Dovecot.",
+          html_body: null,
+          seen: false,
+          flagged: true,
+          attachments: [],
+        },
+        {
+          id: "msg-102",
+          folder: "INBOX",
+          from: "monitoring@shopdemo.co.tz",
+          to: "admin@paixpanel.local",
+          cc: "ops@paixpanel.local",
+          subject: "Daily backup snapshot verified",
+          date: new Date(Date.now() - 6 * 3600 * 1000).toISOString(),
+          message_id: "<backup-102@shopdemo.co.tz>",
+          text_body: "Nightly restic snapshot completed cleanly.\n\nPaths: /srv/apps, /etc/vps-panel, /var/lib/vps-panel\nDuration: 18s",
+          html_body: null,
+          seen: true,
+          flagged: false,
+          attachments: [],
+        },
+        {
+          id: "msg-103",
+          folder: "Sent",
+          from: "admin@paixpanel.local",
+          to: "orders@shopdemo.co.tz",
+          cc: "",
+          subject: "Welcome to Paix Webmail",
+          date: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
+          message_id: "<welcome-103@paixpanel.local>",
+          text_body: "Mail routing and DKIM signatures are live for shopdemo.co.tz.",
+          html_body: null,
+          seen: true,
+          flagged: false,
+          attachments: [],
+        },
+      ],
+      "orders@shopdemo.co.tz": [
+        {
+          id: "msg-201",
+          folder: "INBOX",
+          from: "customer@example.com",
+          to: "orders@shopdemo.co.tz",
+          cc: "",
+          subject: "Order #4821 confirmation inquiry",
+          date: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+          message_id: "<ord-4821@example.com>",
+          text_body: "Hello team,\n\nPlease confirm dispatch timing for Order #4821.\n\nThanks!",
+          html_body: null,
+          seen: false,
+          flagged: false,
+          attachments: [],
+        },
+      ],
+    },
+    sshLogs: [
+      {
+        timestamp: new Date(Date.now() - 90 * 1000).toISOString(),
+        event_type: "failed_password",
+        user: "root",
+        ip: "198.51.100.77",
+        port: 54122,
+        method: "password",
+        raw: `${new Date(Date.now() - 90 * 1000).toISOString()} vps sshd[2410]: Failed password for root from 198.51.100.77 port 54122 ssh2`,
+      },
+      {
+        timestamp: new Date(Date.now() - 180 * 1000).toISOString(),
+        event_type: "invalid_user",
+        user: "ubuntu",
+        ip: "198.51.100.77",
+        port: 54118,
+        method: "password",
+        raw: `${new Date(Date.now() - 180 * 1000).toISOString()} vps sshd[2408]: Failed password for invalid user ubuntu from 198.51.100.77 port 54118 ssh2`,
+      },
+      {
+        timestamp: new Date(Date.now() - 600 * 1000).toISOString(),
+        event_type: "invalid_user",
+        user: "admin",
+        ip: "203.0.113.88",
+        port: 41920,
+        method: null,
+        raw: `${new Date(Date.now() - 600 * 1000).toISOString()} vps sshd[2350]: Invalid user admin from 203.0.113.88 port 41920`,
+      },
+      {
+        timestamp: new Date(Date.now() - 1500 * 1000).toISOString(),
+        event_type: "accepted_publickey",
+        user: "root",
+        ip: "41.59.161.63",
+        port: 51802,
+        method: "publickey",
+        raw: `${new Date(Date.now() - 1500 * 1000).toISOString()} vps sshd[2210]: Accepted publickey for root from 41.59.161.63 port 51802 ssh2: ED25519 SHA256:9xK2mL`,
+      },
+    ],
+    sshSessions: [
+      {
+        user: "root",
+        tty: "pts/0",
+        source_ip: "41.59.161.63",
+        since: new Date(Date.now() - 1500 * 1000).toISOString(),
+        idle: "00:02",
+      },
+    ],
+    manualBannedIps: ["198.51.100.77"],
   };
   return g.__boltPreviewState;
 }
@@ -768,6 +890,107 @@ export async function handlePreviewAgentRequest<T>(
     } as T;
   }
 
+  // Built-in Webmail
+  const wmFoldersMatch = pathname.match(/^\/mail\/webmail\/([^/]+)\/folders$/);
+  if (wmFoldersMatch && m === "GET") {
+    const email = decodeURIComponent(wmFoldersMatch[1]);
+    const list = s.webmailMessages[email] ?? [];
+    const folderNames = ["INBOX", "Sent", "Drafts", "Junk", "Trash"];
+    return folderNames.map((name) => {
+      const inFolder = list.filter((msg) => msg.folder === name);
+      return {
+        name,
+        total: inFolder.length,
+        unread: inFolder.filter((msg) => !msg.seen).length,
+      };
+    }) as T;
+  }
+  const wmListMatch = pathname.match(/^\/mail\/webmail\/([^/]+)\/messages$/);
+  if (wmListMatch && m === "GET") {
+    const email = decodeURIComponent(wmListMatch[1]);
+    const folder = params.get("folder") ?? "INBOX";
+    const q = (params.get("q") ?? "").trim().toLowerCase();
+    const list = (s.webmailMessages[email] ?? [])
+      .filter((msg) => msg.folder === folder)
+      .filter((msg) => {
+        if (!q) return true;
+        return `${msg.subject} ${msg.from} ${msg.to} ${msg.text_body}`.toLowerCase().includes(q);
+      })
+      .map((msg) => ({
+        id: msg.id,
+        folder: msg.folder,
+        from: msg.from,
+        to: msg.to,
+        subject: msg.subject,
+        date: msg.date,
+        snippet: msg.text_body.replace(/\s+/g, " ").slice(0, 140),
+        seen: msg.seen,
+        flagged: msg.flagged,
+        has_attachments: msg.attachments.length > 0,
+        size_bytes: msg.text_body.length + 256,
+      }));
+    return list as T;
+  }
+  const wmReadMatch = pathname.match(/^\/mail\/webmail\/([^/]+)\/messages\/([^/]+)$/);
+  if (wmReadMatch && m === "GET") {
+    const email = decodeURIComponent(wmReadMatch[1]);
+    const id = decodeURIComponent(wmReadMatch[2]);
+    const msg = (s.webmailMessages[email] ?? []).find((x) => x.id === id);
+    if (!msg) throw new Error("Message not found");
+    msg.seen = true;
+    return msg as T;
+  }
+  const wmSendMatch = pathname.match(/^\/mail\/webmail\/([^/]+)\/send$/);
+  if (wmSendMatch && m === "POST") {
+    const email = decodeURIComponent(wmSendMatch[1]);
+    const msgId = `<sent-${Date.now()}@${email.split("@")[1] ?? "local"}>`;
+    const newMsg: WebmailMessageDetail = {
+      id: `msg-${Date.now()}`,
+      folder: "Sent",
+      from: email,
+      to: String(b.to ?? ""),
+      cc: String(b.cc ?? ""),
+      subject: String(b.subject ?? "(no subject)"),
+      date: new Date().toISOString(),
+      message_id: msgId,
+      text_body: String(b.body ?? ""),
+      html_body: null,
+      seen: true,
+      flagged: false,
+      attachments: [],
+    };
+    s.webmailMessages[email] = [newMsg, ...(s.webmailMessages[email] ?? [])];
+    // If sent to another local mailbox in preview, deliver into its INBOX too!
+    const recipients = String(b.to ?? "").split(/[,;]/).map((x) => x.trim().toLowerCase());
+    for (const rcpt of recipients) {
+      if (s.mailboxes.some((mb) => mb.email.toLowerCase() === rcpt)) {
+        s.webmailMessages[rcpt] = [
+          { ...newMsg, id: `inbox-${Date.now()}`, folder: "INBOX", seen: false },
+          ...(s.webmailMessages[rcpt] ?? []),
+        ];
+      }
+    }
+    return { ok: true, message_id: msgId } as T;
+  }
+  const wmActionMatch = pathname.match(/^\/mail\/webmail\/([^/]+)\/action$/);
+  if (wmActionMatch && m === "POST") {
+    const email = decodeURIComponent(wmActionMatch[1]);
+    const list = s.webmailMessages[email] ?? [];
+    const idx = list.findIndex((x) => x.id === String(b.message_id ?? ""));
+    if (idx !== -1) {
+      const msg = list[idx];
+      if (b.action === "mark_read") msg.seen = true;
+      else if (b.action === "mark_unread") msg.seen = false;
+      else if (b.action === "flag") msg.flagged = !msg.flagged;
+      else if (b.action === "move" && b.target_folder) msg.folder = String(b.target_folder);
+      else if (b.action === "delete") {
+        if (msg.folder === "Trash") list.splice(idx, 1);
+        else msg.folder = "Trash";
+      }
+    }
+    return { ok: true } as T;
+  }
+
   // MariaDB & Postgres
   if (m === "GET" && pathname === "/db/users") return s.dbUsers as T;
   if (m === "POST" && pathname === "/db/users") {
@@ -852,6 +1075,108 @@ export async function handlePreviewAgentRequest<T>(
   const jailFailMatch = pathname.match(/^\/fail2ban\/jails\/([^/]+)\/failed-by-ip$/);
   if (jailFailMatch && m === "GET") {
     return [{ ip: "198.51.100.77", attempts: 14, last_seen: new Date().toISOString() }] as T;
+  }
+
+  // Security & SSH Intrusion Monitor
+  if (m === "GET" && pathname === "/security/overview") {
+    const sshdJail = s.jails.find((j) => j.name === "sshd");
+    const bannedSet = new Set([...(sshdJail?.banned ?? []), ...s.manualBannedIps]);
+    const aggMap = new Map<string, {
+      ip: string;
+      failed_attempts: number;
+      invalid_user_attempts: number;
+      accepted_attempts: number;
+      usernames: Set<string>;
+      last_seen: string;
+    }>();
+    let failed_count = 0;
+    let invalid_user_count = 0;
+    let accepted_count = 0;
+
+    for (const ev of s.sshLogs) {
+      if (ev.event_type === "failed_password" || ev.event_type === "auth_failure") failed_count++;
+      if (ev.event_type === "invalid_user") {
+        failed_count++;
+        invalid_user_count++;
+      }
+      if (ev.event_type === "accepted_publickey" || ev.event_type === "accepted_password") accepted_count++;
+      if (ev.ip) {
+        const cur = aggMap.get(ev.ip) ?? {
+          ip: ev.ip,
+          failed_attempts: 0,
+          invalid_user_attempts: 0,
+          accepted_attempts: 0,
+          usernames: new Set<string>(),
+          last_seen: ev.timestamp,
+        };
+        if (ev.user) cur.usernames.add(ev.user);
+        if (ev.timestamp > cur.last_seen) cur.last_seen = ev.timestamp;
+        if (ev.event_type === "failed_password" || ev.event_type === "auth_failure") cur.failed_attempts++;
+        if (ev.event_type === "invalid_user") {
+          cur.failed_attempts++;
+          cur.invalid_user_attempts++;
+        }
+        if (ev.event_type === "accepted_publickey" || ev.event_type === "accepted_password") cur.accepted_attempts++;
+        aggMap.set(ev.ip, cur);
+      }
+    }
+
+    const attackers = [...aggMap.values()].map((a) => ({
+      ip: a.ip,
+      failed_attempts: a.failed_attempts,
+      invalid_user_attempts: a.invalid_user_attempts,
+      accepted_attempts: a.accepted_attempts,
+      usernames: [...a.usernames],
+      last_seen: a.last_seen,
+      banned: bannedSet.has(a.ip),
+    }));
+    const unique_attacker_ips = attackers.filter((a) => a.failed_attempts > 0).length;
+    const alerts: string[] = [];
+    if (failed_count > 0) {
+      alerts.push(`${failed_count} failed or suspicious SSH login attempt(s) from ${unique_attacker_ips} IP(s) in recent logs.`);
+    }
+    const overview: SecurityOverview = {
+      alert_level: failed_count > 0 ? "elevated" : "ok",
+      alerts,
+      posture: {
+        ssh_port: s.sshConfig.port,
+        permit_root_login: s.sshConfig.permit_root_login,
+        password_auth: s.sshConfig.password_auth,
+        idle_timeout_minutes: s.sshConfig.idle_timeout_minutes,
+        root_authorized_keys: s.sshKeys.filter((k) => k.authorized).length,
+        ufw_enabled: s.firewall.ufw_enabled,
+        ufw_rules_count: s.firewall.rules.length,
+        fail2ban_active: s.firewall.fail2ban_active,
+        total_banned_ips: bannedSet.size,
+        sshd_banned_ips: [...bannedSet],
+        sshd_total_failed: sshdJail?.total_failed ?? failed_count,
+      },
+      active_sessions: s.sshSessions,
+      attackers,
+      stats: {
+        total_events: s.sshLogs.length,
+        failed_count,
+        invalid_user_count,
+        accepted_count,
+        unique_attacker_ips,
+      },
+      logs: s.sshLogs,
+    };
+    return overview as T;
+  }
+  if (m === "POST" && pathname === "/security/ban-ip") {
+    const ip = String(b.ip ?? "").trim();
+    if (ip && !s.manualBannedIps.includes(ip)) s.manualBannedIps.push(ip);
+    const sshd = s.jails.find((j) => j.name === "sshd");
+    if (sshd && !sshd.banned.includes(ip)) sshd.banned.push(ip);
+    return { ok: true } as T;
+  }
+  if (m === "POST" && pathname === "/security/unban-ip") {
+    const ip = String(b.ip ?? "").trim();
+    s.manualBannedIps = s.manualBannedIps.filter((x) => x !== ip);
+    const sshd = s.jails.find((j) => j.name === "sshd");
+    if (sshd) sshd.banned = sshd.banned.filter((x) => x !== ip);
+    return { ok: true } as T;
   }
 
   // SSH

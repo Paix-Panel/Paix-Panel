@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { agent } from "@/lib/agent";
 import Table from "@/components/Table/Table";
 import StatusBadge from "@/components/StatusBadge/StatusBadge";
@@ -37,6 +38,11 @@ export default async function FirewallPage() {
         <div>
           <h1 className={styles.title}>Firewall and bans</h1>
           <div className={styles.subtitle}>UFW rules and fail2ban jails.</div>
+        </div>
+        <div className={styles.actions}>
+          <Link href="/security" className={styles.btnGhost} style={{ textDecoration: "none" }}>
+            SSH intrusion &amp; logs
+          </Link>
         </div>
       </div>
 

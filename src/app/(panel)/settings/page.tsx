@@ -78,7 +78,7 @@ export default async function SettingsPage() {
   const sessionTtl = await getSetting("panel.session_ttl_minutes", defaultMinutes);
   const acmeEmail = await getSetting("panel.acme_email", "");
   const nsPair = await getSetting("dns.ns_pair", "");
-  const panelTimezone = await getSetting("panel.timezone", "UTC");
+  const panelTimezone = await getSetting("panel.timezone", "auto");
   // ThemeForm parses this itself and tolerates anything, including the bare
   // hex the setting held before the dials and per-shade pins existed.
   const theme =

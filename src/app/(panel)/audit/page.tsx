@@ -1,14 +1,14 @@
 import Link from "next/link";
 import { requireSession } from "@/lib/auth";
 import {
-  formatAuditTs,
-  getPanelTimezone,
   listAuditDays,
   listAuditForDay,
+  resolvePanelTimezone,
   todayInTz,
 } from "@/lib/audit";
 import Table from "@/components/Table/Table";
 import StatusBadge from "@/components/StatusBadge/StatusBadge";
+import LocalTime from "@/components/LocalTime/LocalTime";
 import styles from "@/components/page.module.css";
 import audit from "./audit.module.css";
 
@@ -50,23 +50,17 @@ export default async function AuditPage({
     );
   }
   const sp = await searchParams;
-  const tz = getPanelTimezone();
-  const today = todayInTz();
+  const tz = await resolvePanelTimezone();
+  const today = todayInTz(tz);
   const requestedDay = sp.day && DATE_RE.test(sp.day) ? sp.day : null;
 
-  const days = listAuditDays(); // newest -> oldest
+  const days = listAuditDays(tz); // newest -> oldest
   const newestWithLogs = days[0] ?? null;
   const oldestWithLogs = days[days.length - 1] ?? null;
 
-  // Default: newest day that has logs (or today if the log is empty entirely).
-  // Clamp future requests to today so a copy-pasted URL with day=2099-01-01
-  // doesn't pretend there's a future day.
   let currentDay = requestedDay ?? newestWithLogs ?? today;
   if (currentDay > today) currentDay = today;
 
-  // Prev = older day. If the current day has logs and is in the list, the
-  // next index is the prev day. Otherwise, find the first day in the list
-  // that's strictly older than currentDay.
   let prevDay: string | null = null;
   for (const d of days) {
     if (d < currentDay) {
@@ -75,9 +69,6 @@ export default async function AuditPage({
     }
   }
 
-  // Next = newer day. Walk the list backwards (oldest -> newest) and find
-  // the first one strictly newer than currentDay. Don't allow going beyond
-  // today even if the log somehow has future entries.
   let nextDay: string | null = null;
   for (let i = days.length - 1; i >= 0; i--) {
     if (days[i] > currentDay) {
@@ -87,7 +78,7 @@ export default async function AuditPage({
   }
   if (nextDay && nextDay > today) nextDay = null;
 
-  const rows = listAuditForDay(currentDay);
+  const rows = listAuditForDay(currentDay, 2000, tz);
   const isToday = currentDay === today;
   const hasLogsThisDay = rows.length > 0;
 
@@ -167,7 +158,7 @@ export default async function AuditPage({
             { key: "msg", label: "Message", width: "420px" },
           ]}
           rows={rows.map((r) => ({
-            ts: <span className={styles.muted}>{formatAuditTs(r.ts)}</span>,
+            ts: <LocalTime value={r.ts} className={styles.muted} />,
             actor: renderActor(r.actor_email, r.actor_id),
             action: <span className={styles.code}>{r.action}</span>,
             target: r.target ? (

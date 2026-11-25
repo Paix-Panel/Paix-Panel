@@ -1063,6 +1063,74 @@ export const agent = {
     subjectErase: (body: SubjectQuery & { sources: string[] }) =>
       agentRequest<SubjectEraseResult>({ method: "POST", path: "/privacy/subject/erase", body }),
   },
+
+  webmail: {
+    folders: (email: string) =>
+      agentRequest<WebmailFolderSummary[]>({
+        method: "GET",
+        path: `/mail/webmail/${encodeURIComponent(email)}/folders`,
+        timeoutMs: READ_MS,
+      }),
+    messages: (email: string, folder = "INBOX", q = "") =>
+      agentRequest<WebmailMessageSummary[]>({
+        method: "GET",
+        path: `/mail/webmail/${encodeURIComponent(email)}/messages`,
+        query: { folder, q: q || undefined },
+        timeoutMs: READ_MS,
+      }),
+    readMessage: (email: string, id: string, folder = "INBOX") =>
+      agentRequest<WebmailMessageDetail>({
+        method: "GET",
+        path: `/mail/webmail/${encodeURIComponent(email)}/messages/${encodeURIComponent(id)}`,
+        query: { folder },
+        timeoutMs: READ_MS,
+      }),
+    send: (
+      email: string,
+      body: { to: string; cc?: string; subject: string; body: string; in_reply_to?: string },
+    ) =>
+      agentRequest<{ ok: boolean; message_id: string }>({
+        method: "POST",
+        path: `/mail/webmail/${encodeURIComponent(email)}/send`,
+        body,
+      }),
+    action: (
+      email: string,
+      body: {
+        folder: string;
+        message_id: string;
+        action: "mark_read" | "mark_unread" | "flag" | "move" | "delete";
+        target_folder?: string;
+      },
+    ) =>
+      agentRequest<Ok>({
+        method: "POST",
+        path: `/mail/webmail/${encodeURIComponent(email)}/action`,
+        body,
+      }),
+  },
+
+  security: {
+    overview: (lines = 300) =>
+      agentRequest<SecurityOverview>({
+        method: "GET",
+        path: "/security/overview",
+        query: { lines },
+        timeoutMs: READ_MS,
+      }),
+    banIp: (ip: string) =>
+      agentRequest<Ok>({
+        method: "POST",
+        path: "/security/ban-ip",
+        body: { ip },
+      }),
+    unbanIp: (ip: string) =>
+      agentRequest<Ok>({
+        method: "POST",
+        path: "/security/unban-ip",
+        body: { ip },
+      }),
+  },
 };
 
 export type PrivacyPart = {
@@ -1815,4 +1883,106 @@ export type SiteListEntry = {
    *  | "external" manual deploy. UI shows the "Remove from agent" action only
    *  for "site" and "external". */
   kind: "site" | "app" | "panel-host" | "external";
+};
+
+export type WebmailFolderSummary = {
+  name: string;
+  total: number;
+  unread: number;
+};
+
+export type WebmailAttachmentInfo = {
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+};
+
+export type WebmailMessageSummary = {
+  id: string;
+  folder: string;
+  from: string;
+  to: string;
+  subject: string;
+  date: string;
+  snippet: string;
+  seen: boolean;
+  flagged: boolean;
+  has_attachments: boolean;
+  size_bytes: number;
+};
+
+export type WebmailMessageDetail = {
+  id: string;
+  folder: string;
+  from: string;
+  to: string;
+  cc: string;
+  subject: string;
+  date: string;
+  message_id: string;
+  text_body: string;
+  html_body: string | null;
+  seen: boolean;
+  flagged: boolean;
+  attachments: WebmailAttachmentInfo[];
+};
+
+export type SecurityPosture = {
+  ssh_port: number;
+  permit_root_login: string;
+  password_auth: boolean;
+  idle_timeout_minutes: number;
+  root_authorized_keys: number;
+  ufw_enabled: boolean;
+  ufw_rules_count: number;
+  fail2ban_active: boolean;
+  total_banned_ips: number;
+  sshd_banned_ips: string[];
+  sshd_total_failed: number;
+};
+
+export type SshActiveSession = {
+  user: string;
+  tty: string;
+  source_ip: string;
+  since: string;
+  idle: string;
+};
+
+export type SshAttackerSummary = {
+  ip: string;
+  failed_attempts: number;
+  invalid_user_attempts: number;
+  accepted_attempts: number;
+  usernames: string[];
+  last_seen: string;
+  banned: boolean;
+};
+
+export type SshLogEvent = {
+  timestamp: string;
+  event_type: string;
+  user: string | null;
+  ip: string | null;
+  port: number | null;
+  method: string | null;
+  raw: string;
+};
+
+export type SshLogStats = {
+  total_events: number;
+  failed_count: number;
+  invalid_user_count: number;
+  accepted_count: number;
+  unique_attacker_ips: number;
+};
+
+export type SecurityOverview = {
+  alert_level: "ok" | "elevated" | "critical";
+  alerts: string[];
+  posture: SecurityPosture;
+  active_sessions: SshActiveSession[];
+  attackers: SshAttackerSummary[];
+  stats: SshLogStats;
+  logs: SshLogEvent[];
 };

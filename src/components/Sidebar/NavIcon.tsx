@@ -95,6 +95,13 @@ const GLYPHS = {
       <path d="M3 8L12 13L21 8" />
     </>
   ),
+  webmail: (
+    <>
+      <path d="M3 10.5V18a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7.5" />
+      <path d="M3 10.5L12 4l9 6.5" />
+      <path d="M3 10.5l9 5.5 9-5.5" />
+    </>
+  ),
   databases: (
     <>
       <ellipse cx="12" cy="6" rx="8" ry="3" />
@@ -152,6 +159,12 @@ const GLYPHS = {
       <rect x="3" y="3.5" width="18" height="16.5" rx="2" />
       <path d="M3 9H21M3 14.5H21" />
       <path d="M8 3.5V9M16 3.5V9M12 9V14.5M8 14.5V20M16 14.5V20" />
+    </>
+  ),
+  security: (
+    <>
+      <path d="M12 3.5L19.5 6.5V12c0 4.5-3.2 7.8-7.5 9-4.3-1.2-7.5-4.5-7.5-9V6.5L12 3.5Z" />
+      <path d="M9.5 12l2 2 3.5-4" />
     </>
   ),
   users: (

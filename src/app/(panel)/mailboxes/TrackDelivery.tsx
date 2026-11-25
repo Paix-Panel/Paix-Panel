@@ -4,6 +4,7 @@ import { useState } from "react";
 import styles from "@/components/page.module.css";
 import StatusBadge from "@/components/StatusBadge/StatusBadge";
 import Table from "@/components/Table/Table";
+import LocalTime from "@/components/LocalTime/LocalTime";
 import type { MailTrackResp, MailTrackStatus } from "@/lib/agent";
 import localStyles from "./mailboxes.module.css";
 import { useFormActionState } from "@/lib/useFormActionState";
@@ -19,11 +20,6 @@ const STATUS: Record<MailTrackStatus, { label: string; tone: "ok" | "warn" | "da
   expired: { label: "gave up", tone: "danger" },
   rejected: { label: "rejected", tone: "danger" },
 };
-
-/** journalctl short-iso (2026-10-11T14:11:03+0200) as "2026-10-11 14:11:03". */
-function when(t: string): string {
-  return t.length >= 19 ? `${t.slice(0, 10)} ${t.slice(11, 19)}` : t;
-}
 
 /**
  * Track delivery: search Postfix's log for mail to or from one address and
@@ -98,7 +94,7 @@ export default function TrackDelivery({
               { key: "detail", label: "Details", width: "380px" },
             ]}
             rows={resp.rows.map((r) => ({
-              time: <span className={localStyles.trackTime}>{when(r.time)}</span>,
+              time: <LocalTime value={r.time} className={localStyles.trackTime} />,
               from: r.from ? (
                 <span className={styles.code}>{r.from}</span>
               ) : (

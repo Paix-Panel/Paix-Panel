@@ -1,5 +1,7 @@
 import Link from "next/link";
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
 import { requireSession } from "@/lib/auth";
+import { hasPermission, isAdminRole } from "@/lib/permissions";
 import {
   listAuditDays,
   listAuditForDay,
@@ -35,18 +37,13 @@ export default async function AuditPage({
 }: {
   searchParams: Promise<{ day?: string }>;
 }) {
-  // Every Terminal command is in here word for word (passwords typed on a
-  // command line included), with targets and error text: admins only, like
-  // the logs and task logs.
   const s = await requireSession();
-  if (s.role !== "admin") {
+  if (!hasPermission(s, "logs")) {
     return (
-      <div className={styles.head}>
-        <div>
-          <h1 className={styles.title}>Audit log</h1>
-          <div className={styles.subtitle}>Only admins can read the audit log.</div>
-        </div>
-      </div>
+      <AccessRestricted
+        title="Audit log restricted"
+        message="You do not have permission to view the panel audit log."
+      />
     );
   }
   const sp = await searchParams;
@@ -78,7 +75,10 @@ export default async function AuditPage({
   }
   if (nextDay && nextDay > today) nextDay = null;
 
-  const rows = listAuditForDay(currentDay, 2000, tz);
+  const allRows = listAuditForDay(currentDay, 2000, tz);
+  const rows = isAdminRole(s.role)
+    ? allRows
+    : allRows.filter((r) => r.actor_id === s.userId || r.actor_email === s.email);
   const isToday = currentDay === today;
   const hasLogsThisDay = rows.length > 0;
 

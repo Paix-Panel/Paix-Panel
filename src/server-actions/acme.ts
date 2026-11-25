@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -25,7 +25,7 @@ function validateAcmeEmail(raw: string): string | null {
 }
 
 export async function setAcmeEmailAction(value: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("settings");
   const trimmed = value.trim();
   const err = validateAcmeEmail(trimmed);
   if (err) {

@@ -12,11 +12,26 @@ import {
 import { db } from "./db";
 import { getSettingNumber } from "./settings";
 import { randomUUID } from "node:crypto";
+import {
+  emptyPermissions,
+  hasPermission,
+  isAdminRole,
+  isSuperAdmin,
+  normalizeRole,
+  parsePermissions,
+  type PermissionKey,
+  type UserPermissions,
+  type UserRole,
+} from "./permissions";
+
+export { isAdminRole, isSuperAdmin, hasPermission } from "./permissions";
 
 export type Session = {
   userId: number;
   email: string;
-  role: string;
+  displayName: string;
+  role: UserRole;
+  permissions: UserPermissions;
   jti: string;
   needsTotp: boolean;
   /** True when the operator ticked "Remember me" at login. Carried through
@@ -38,12 +53,6 @@ export type IssuedSession = {
 const SESSION_TTL_KEY = "panel.session_ttl_minutes";
 const MIN_TTL_SECONDS = 60;
 const MAX_TTL_SECONDS = 30 * 24 * 60 * 60;
-/** TTL applied to both access and refresh tokens when the operator ticked
- *  "Remember me" at login. Same as `MAX_TTL_SECONDS` (30 days) — chosen so
- *  the cookie survives the configured `panel.session_ttl_minutes` default
- *  but doesn't outlive the session DB-row cleanup horizon. Exported so the
- *  /api/auth/refresh route can mirror the same TTL when refreshing a
- *  remembered session. */
 export const REMEMBER_TTL_SECONDS = MAX_TTL_SECONDS;
 
 const secret = () => new TextEncoder().encode(config.jwtSecret);
@@ -72,8 +81,6 @@ export async function issueSession(
   const accessJti = randomUUID();
   const refreshJti = randomUUID();
   const now = Math.floor(Date.now() / 1000);
-  // Remember-me overrides the configured `panel.session_ttl_minutes` default
-  // for this session only. The setting still applies to non-remembered logins.
   const { accessSeconds, refreshSeconds } = remember
     ? { accessSeconds: REMEMBER_TTL_SECONDS, refreshSeconds: REMEMBER_TTL_SECONDS }
     : resolveSessionTtl();
@@ -81,7 +88,7 @@ export async function issueSession(
   const access = await new SignJWT({
     sub: String(userId),
     email,
-    role,
+    role: normalizeRole(role),
     needsTotp,
     remember,
     rjti: refreshJti,
@@ -139,10 +146,17 @@ export async function setAuthCookies(
 export async function clearAuthCookies() {
   const jar = await cookies();
   jar.delete(COOKIE_NAME);
-  // A cookie is only replaced by one with the same path. Deleting it at the
-  // default "/" left the refresh cookie in the browser after logout.
   jar.delete({ name: REFRESH_COOKIE, path: "/api/auth/refresh" });
 }
+
+type DbUserSessionRow = {
+  id: number;
+  email: string;
+  display_name: string;
+  role: string;
+  permissions_json: string;
+  is_active: number;
+};
 
 export async function getSession(): Promise<Session | null> {
   const jar = await cookies();
@@ -151,13 +165,24 @@ export async function getSession(): Promise<Session | null> {
     if (config.isPreviewMock && !jar.get("vps_panel_preview_signed_out")?.value) {
       await syncAdminFromEnv();
       const admin = db()
-        .prepare(`SELECT id, email, role FROM users WHERE role = 'admin' ORDER BY id ASC LIMIT 1`)
-        .get() as { id: number; email: string; role: string } | undefined;
+        .prepare(
+          `SELECT id, email, display_name, role, permissions_json, is_active
+             FROM users
+            WHERE is_active = 1 AND role IN ('super_admin', 'admin')
+            ORDER BY CASE role WHEN 'super_admin' THEN 0 ELSE 1 END, id ASC
+            LIMIT 1`,
+        )
+        .get() as DbUserSessionRow | undefined;
       if (admin) {
+        const role = normalizeRole(admin.role);
         return {
           userId: admin.id,
           email: admin.email,
-          role: admin.role,
+          displayName: admin.display_name ?? "",
+          role,
+          permissions: isAdminRole(role)
+            ? emptyPermissions()
+            : parsePermissions(admin.permissions_json),
           jti: "preview-session",
           needsTotp: false,
           remember: true,
@@ -174,10 +199,25 @@ export async function getSession(): Promise<Session | null> {
       .prepare(`SELECT revoked FROM sessions WHERE jti = ?`)
       .get(jti) as { revoked: number } | undefined;
     if (!row || row.revoked) return null;
+
+    const userId = Number(payload.sub);
+    const userRow = db()
+      .prepare(
+        `SELECT id, email, display_name, role, permissions_json, is_active
+           FROM users WHERE id = ?`,
+      )
+      .get(userId) as DbUserSessionRow | undefined;
+    if (!userRow || !userRow.is_active) return null;
+
+    const role = normalizeRole(userRow.role);
     return {
-      userId: Number(payload.sub),
-      email: payload.email as string,
-      role: payload.role as string,
+      userId: userRow.id,
+      email: userRow.email,
+      displayName: userRow.display_name ?? "",
+      role,
+      permissions: isAdminRole(role)
+        ? emptyPermissions()
+        : parsePermissions(userRow.permissions_json),
       jti,
       needsTotp: Boolean(payload.needsTotp),
       remember: Boolean(payload.remember),
@@ -196,20 +236,38 @@ export async function requireSession(): Promise<Session> {
 }
 
 /**
- * Like requireSession(), but additionally requires the `admin` role. EVERY
- * state-changing / privileged server action must call this instead of
- * requireSession(): server actions are POST-invokable endpoints, so the form
- * UI is no gate — without a role check here a non-admin ("user" role) session
- * could reach root-capable operations (deploy code, reset root password, plant
- * SSH keys, open the firewall, schedule root cron, self-update, restore
- * backups). Throws for non-admins (matching the existing users.ts pattern); the
- * thrown error surfaces as a rejected server action for the rare unauthorized
- * caller. Pure read-only/list actions may stay on requireSession().
+ * Requires `super_admin` or `admin` role. Both admin tiers have full
+ * server operations power; super_admin additionally manages admins and
+ * panel-wide SSO / high-privilege security.
  */
 export async function requireAdmin(): Promise<Session> {
   const s = await requireSession();
-  if (s.role !== "admin") {
+  if (!isAdminRole(s.role)) {
     throw new Error("forbidden: admin role required");
+  }
+  return s;
+}
+
+/**
+ * Requires `super_admin` role (e.g. creating/demoting admins or managing
+ * panel-level OAuth credentials).
+ */
+export async function requireSuperAdmin(): Promise<Session> {
+  const s = await requireSession();
+  if (!isSuperAdmin(s.role)) {
+    throw new Error("forbidden: super_admin role required");
+  }
+  return s;
+}
+
+/**
+ * Requires either an admin role (`super_admin` / `admin`) OR explicit module
+ * permission granted on a `user` account.
+ */
+export async function requirePermission(perm: PermissionKey): Promise<Session> {
+  const s = await requireSession();
+  if (!hasPermission(s, perm)) {
+    throw new Error(`forbidden: ${perm} permission required`);
   }
   return s;
 }
@@ -221,15 +279,8 @@ export async function revokeSession(jti: string) {
 export async function syncAdminFromEnv(): Promise<void> {
   if (!config.bootstrapEmail || !config.bootstrapPassword) return;
 
-  // Only seed when there is NO admin yet. .env is a one-time bootstrap value
-  // from install time; once an admin exists in the DB the user's chosen
-  // email + password are authoritative. Without this guard, changing the
-  // admin email from the UI gets overwritten on next login (we'd find no
-  // user with the OLD .env email and create a fresh one), and the old
-  // behavior also silently reset the password back to ADMIN_INITIAL_PASSWORD
-  // every time the user logged in after changing it.
   const existing = db()
-    .prepare(`SELECT COUNT(*) as c FROM users WHERE role = 'admin'`)
+    .prepare(`SELECT COUNT(*) as c FROM users WHERE role IN ('super_admin', 'admin')`)
     .get() as { c: number };
   if (existing.c > 0) return;
 
@@ -238,6 +289,9 @@ export async function syncAdminFromEnv(): Promise<void> {
   const { hashPassword } = await import("./crypto");
   const hash = await hashPassword(envPassword);
   db()
-    .prepare(`INSERT INTO users (email, password_hash, role) VALUES (?, ?, 'admin')`)
+    .prepare(
+      `INSERT INTO users (email, display_name, password_hash, role, google_enabled, is_active)
+       VALUES (?, 'Super Admin', ?, 'super_admin', 1, 1)`,
+    )
     .run(email, hash);
 }

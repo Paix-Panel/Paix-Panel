@@ -2,7 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { agent } from "@/lib/agent";
-import { requireAdmin } from "@/lib/auth";
+import { isAdminRole, requirePermission } from "@/lib/auth";
+import { isDatabaseAllowed } from "@/lib/permissions";
 import { writeAudit } from "@/lib/audit";
 
 export type ActionResult<T = undefined> =
@@ -82,7 +83,7 @@ export async function createDbUserAction(
   _prev: ActionResult<{ password: string; user: string; host: string }> | null,
   fd: FormData,
 ): Promise<ActionResult<{ password: string; user: string; host: string }>> {
-  const s = await requireAdmin();
+  const s = await requirePermission("databases");
   const user = String(fd.get("user") ?? "").trim();
   const host = String(fd.get("host") ?? "localhost").trim();
   // Blank means "generate one". A typed password is used as typed: trimming
@@ -114,8 +115,11 @@ export async function createDatabaseAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("databases");
   const name = String(fd.get("name") ?? "").trim();
+  if (!isDatabaseAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: database is outside your assigned scope." };
+  }
   try {
     await agent.databases.createDatabase(name);
     writeAudit({ actorId: s.userId, action: "db.databases.create", target: name, result: "ok" });
@@ -138,11 +142,14 @@ export async function grantAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("databases");
   const user = String(fd.get("user") ?? "").trim();
   const host = String(fd.get("host") ?? "localhost").trim();
   const database = String(fd.get("database") ?? "").trim();
   const privileges = String(fd.get("privileges") ?? "ALL PRIVILEGES");
+  if (!isDatabaseAllowed(s, database)) {
+    return { ok: false, error: "Forbidden: database not assigned to your account." };
+  }
   try {
     await agent.databases.grant({ user, host, database, privileges });
     writeAudit({ actorId: s.userId, action: "db.grant", target: `${user}@${host}->${database}`, result: "ok" });
@@ -165,7 +172,10 @@ export async function grantAction(
 // a thrown server-action error's message in a production build, so the dialog
 // showed a generic text in place of "User ... does not exist".
 export async function deleteDbUserAction(user: string, host: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("databases");
+  if (!isAdminRole(s.role) && (s.permissions?.scopes?.databases?.length ?? 0) > 0) {
+    return { ok: false, error: "Forbidden: scoped database accounts cannot drop server-wide DB users." };
+  }
   try {
     await agent.databases.deleteUser(user, host);
     writeAudit({ actorId: s.userId, action: "db.users.delete", target: `${user}@${host}`, result: "ok" });
@@ -185,7 +195,10 @@ export async function deleteDbUserAction(user: string, host: string): Promise<Ac
 }
 
 export async function deleteDatabaseAction(name: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("databases");
+  if (!isDatabaseAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: database not assigned to your account." };
+  }
   try {
     await agent.databases.deleteDatabase(name);
     writeAudit({ actorId: s.userId, action: "db.databases.delete", target: name, result: "ok" });
@@ -214,7 +227,10 @@ export async function revokeDbGrantAction(
   host: string,
   database: string,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("databases");
+  if (!isDatabaseAllowed(s, database)) {
+    return { ok: false, error: "Forbidden: database not assigned to your account." };
+  }
   try {
     await agent.databases.revoke({ user, host, database });
     writeAudit({
@@ -245,7 +261,7 @@ export async function revokeDbGrantAction(
  * form needs. A 409 means the folder is already there — success for us.
  */
 export async function prepareSqlImportAction(): Promise<ActionResult> {
-  await requireAdmin();
+  await requirePermission("databases");
   try {
     await agent.files.mkdir("drive", "", "sql-dumps");
     return { ok: true };
@@ -270,7 +286,14 @@ export async function importSqlDumpAction(input: {
   createTarget?: boolean;
   dropFirst?: boolean;
 }): Promise<ActionResult<{ taskId: string; database: string }>> {
-  const s = await requireAdmin();
+  const s = await requirePermission("databases");
+  if (
+    !isAdminRole(s.role) &&
+    (s.permissions?.scopes?.databases?.length ?? 0) > 0 &&
+    (!input.targetDb || !isDatabaseAllowed(s, input.targetDb))
+  ) {
+    return { ok: false, error: "Forbidden: select an assigned target database for SQL import." };
+  }
   try {
     const resp = await agent.databases.importSql({
       root: "drive",
@@ -305,7 +328,10 @@ export async function setDbUserPasswordAction(
   host: string,
   password: string,
 ): Promise<ActionResult<{ password: string }>> {
-  const s = await requireAdmin();
+  const s = await requirePermission("databases");
+  if (!isAdminRole(s.role) && (s.permissions?.scopes?.databases?.length ?? 0) > 0) {
+    return { ok: false, error: "Forbidden: scoped database accounts cannot rotate server-wide DB user passwords." };
+  }
   try {
     const resp = await agent.databases.setUserPassword(user, {
       host,

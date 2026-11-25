@@ -1,22 +1,19 @@
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
 import { requireSession } from "@/lib/auth";
+import { hasPermission } from "@/lib/permissions";
 import { agent } from "@/lib/agent";
-import styles from "@/components/page.module.css";
 import SecurityClient from "./SecurityClient";
 
 export const dynamic = "force-dynamic";
 
 export default async function SecurityPage() {
   const s = await requireSession();
-  if (s.role !== "admin") {
+  if (!hasPermission(s, "security")) {
     return (
-      <div className={styles.head}>
-        <div>
-          <h1 className={styles.title}>Security &amp; SSH Monitor</h1>
-          <div className={styles.subtitle}>
-            Only admins can inspect SSH intrusion logs and security posture.
-          </div>
-        </div>
-      </div>
+      <AccessRestricted
+        title="Security access restricted"
+        message="You do not have permission to inspect SSH security posture and intrusion logs."
+      />
     );
   }
 

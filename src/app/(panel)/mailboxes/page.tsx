@@ -1,4 +1,8 @@
 import Link from "next/link";
+import { Mail } from "lucide-react";
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
+import { requireSession } from "@/lib/auth";
+import { hasPermission, isDomainAllowed } from "@/lib/permissions";
 import { agent, type MailAliasRow, type MailDomainRow } from "@/lib/agent";
 import { db } from "@/lib/db";
 import { mailboxDomains } from "@/lib/mailboxDomains";
@@ -29,10 +33,25 @@ export const dynamic = "force-dynamic";
 
 type MailboxListShape = { server: string; mailboxes: { id: number; email: string; quota_mb: number }[] };
 
-export default async function MailboxesPage() {
-  const knownDomains = mailboxDomains();
+function emailDomain(address: string): string {
+  const at = address.lastIndexOf("@");
+  return at >= 0 ? address.slice(at + 1).toLowerCase() : "";
+}
 
-  const [mailboxResp, sysinfo, recipes, aliases, mailDomains, mailIp] = await Promise.all([
+export default async function MailboxesPage() {
+  const session = await requireSession();
+  if (!hasPermission(session, "mail")) {
+    return (
+      <AccessRestricted
+        title="Mailboxes access restricted"
+        message="You do not have permission to view or manage mailboxes."
+      />
+    );
+  }
+
+  const knownDomains = mailboxDomains().filter((d) => isDomainAllowed(session, d));
+
+  const [mailboxResp, sysinfo, recipes, rawAliases, rawMailDomains, mailIp] = await Promise.all([
     agent.mail
       .listMailboxes()
       .then<MailboxListShape>((r: unknown) => {
@@ -51,16 +70,17 @@ export default async function MailboxesPage() {
     agent.quickInstall.list().catch(() => null),
     agent.mail.listAliases().catch((): MailAliasRow[] => []),
     agent.mail.listDomains().catch((): MailDomainRow[] => []),
-    // Only for one line in the connection card; left out when it fails.
     agent.mail.ipSettings().catch(() => null),
   ]);
 
-  const { server, mailboxes } = mailboxResp;
+  const server = mailboxResp.server;
+  const mailboxes = mailboxResp.mailboxes.filter((m) =>
+    isDomainAllowed(session, emailDomain(m.email)),
+  );
+  const aliases = rawAliases.filter((a) => isDomainAllowed(session, emailDomain(a.source)));
+  const mailDomains = rawMailDomains.filter((d) => isDomainAllowed(session, d.name));
   const mailboxEmails = new Set(mailboxes.map((m) => m.email.toLowerCase()));
 
-  // Probe per-mailbox usage in parallel. We keep raw bytes so the UI can
-  // render sub-MB precision (otherwise small mailboxes always show "0 MB"
-  // because the agent ceiling-rounds usage_mb to whole MB).
   const usageEntries = await Promise.all(
     mailboxes.map(async (m) => {
       const u = await agent.mail
@@ -204,7 +224,7 @@ export default async function MailboxesPage() {
                         textDecoration: "none",
                       }}
                     >
-                      <EmailIcon />
+                      <Mail size={16} />
                     </Link>
                     <EditMailboxRow
                       email={m.email}
@@ -310,25 +330,6 @@ function formatQuota(usedMb: number, totalMb: number): string {
     return `${usedGb.toFixed(2)} / ${totalGb.toFixed(totalGb % 1 === 0 ? 0 : 1)} GB`;
   }
   return `${usedMb.toFixed(2)} / ${totalMb} MB`;
-}
-
-function EmailIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <rect x="3" y="5" width="18" height="14" rx="2" />
-      <polyline points="3 7 12 13 21 7" />
-    </svg>
-  );
 }
 
 function renderQuotaCell(usedMb: number, totalMb: number): React.ReactNode {

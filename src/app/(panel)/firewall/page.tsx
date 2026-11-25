@@ -1,4 +1,7 @@
 import Link from "next/link";
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
+import { requireSession } from "@/lib/auth";
+import { hasPermission } from "@/lib/permissions";
 import { agent } from "@/lib/agent";
 import Table from "@/components/Table/Table";
 import StatusBadge from "@/components/StatusBadge/StatusBadge";
@@ -26,6 +29,16 @@ import Fail2banPolicyForm from "./Fail2banPolicyForm";
 export const dynamic = "force-dynamic";
 
 export default async function FirewallPage() {
+  const session = await requireSession();
+  if (!hasPermission(session, "security")) {
+    return (
+      <AccessRestricted
+        title="Firewall access restricted"
+        message="You do not have permission to manage firewall rules or fail2ban."
+      />
+    );
+  }
+
   const [status, jails, fail2banPolicy] = await Promise.all([
     agent.firewall.status().catch(() => null),
     agent.firewall.jails().catch(() => []),

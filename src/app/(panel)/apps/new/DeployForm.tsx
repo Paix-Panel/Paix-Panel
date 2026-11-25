@@ -40,6 +40,8 @@ type Props = {
    *  external-app recovery flow so the operator's saved repo URL (if any)
    *  shows up without re-typing. */
   initialRepoUrl?: string;
+  /** Optional runtime pre-selected from query param (e.g. ?runtime=python). */
+  initialRuntime?: string;
 };
 
 // Hard-coded by the agent (agent/src/handlers/apps.rs::APPS_BASE_DIR). All
@@ -156,6 +158,7 @@ export default function DeployForm({
   rootKeypairs = [],
   lockedName,
   initialRepoUrl = "",
+  initialRuntime,
 }: Props) {
   const router = useRouter();
   const [state, formAction, pending] = useActionState<Result | null, FormData>(action, null);
@@ -183,11 +186,14 @@ export default function DeployForm({
     portSites.find((s) => slotKey(s) === pickedSlotKey) ?? portSites[0] ?? null;
   const activePort = pickedSlot?.upstream_port ?? 3000;
   const [repoUrl, setRepoUrl] = useState(initialRepoUrl);
-  const [runtime, setRuntime] = useState<RuntimeValue>("node");
+  const validRuntime = RUNTIME_OPTIONS.find((o) => o.value === initialRuntime)?.value ?? "node";
+  const [runtime, setRuntime] = useState<RuntimeValue>(validRuntime);
   // Exec start must survive the post-action form.reset() (React 19) like the
   // other operator-typed fields, or a multi-step deploy silently reverts it to
   // the default and starts the wrong entrypoint.
-  const [execStart, setExecStart] = useState("/usr/bin/npm start");
+  const [execStart, setExecStart] = useState(
+    () => presetsForRuntime(validRuntime, activePort)[0]?.cmd ?? "/usr/bin/npm start",
+  );
   const [customExecEdited, setCustomExecEdited] = useState(false);
   const sourceDir = name ? `${APPS_BASE_DIR}/${name}` : `${APPS_BASE_DIR}/<app-name>`;
   const nameLocked = !!lockedName;

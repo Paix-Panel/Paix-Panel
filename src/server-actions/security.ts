@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { isIP } from "node:net";
 import { agent, type SecurityOverview } from "@/lib/agent";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 import { agentErrorMessage } from "@/lib/redirects";
 
@@ -14,7 +14,7 @@ export type SecurityActionResult<T = undefined> =
 export async function fetchSecurityOverviewAction(
   lines = 300,
 ): Promise<SecurityActionResult<SecurityOverview>> {
-  await requireAdmin();
+  await requirePermission("security");
   try {
     const data = await agent.security.overview(lines);
     return { ok: true, data };
@@ -24,7 +24,7 @@ export async function fetchSecurityOverviewAction(
 }
 
 export async function banIpSecurityAction(ip: string): Promise<SecurityActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("security");
   const clean = ip.trim();
   if (!isIP(clean)) {
     return { ok: false, error: "Invalid IP address." };
@@ -54,7 +54,7 @@ export async function banIpSecurityAction(ip: string): Promise<SecurityActionRes
 }
 
 export async function unbanIpSecurityAction(ip: string): Promise<SecurityActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("security");
   const clean = ip.trim();
   if (!isIP(clean)) {
     return { ok: false, error: "Invalid IP address." };

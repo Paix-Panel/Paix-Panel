@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { isIP } from "node:net";
 import { agent } from "@/lib/agent";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 import { agentErrorMessage } from "@/lib/redirects";
 
@@ -22,7 +22,7 @@ export async function setServerHostnameAction(
   _prev: HostnameResult | null,
   fd: FormData,
 ): Promise<HostnameResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("settings");
   const raw = String(fd.get("hostname") ?? "").trim().toLowerCase();
   const name = raw.endsWith(".") ? raw.slice(0, -1) : raw;
   if (!name || name.length > 64 || isIP(name) || !name.split(".").every((l) => LABEL.test(l))) {

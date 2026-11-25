@@ -1,9 +1,19 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Database, ExternalLink, FolderOpen, ScrollText, Terminal } from "lucide-react";
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
 import { agent, type GitStatusResp } from "@/lib/agent";
 import StatusBadge from "@/components/StatusBadge/StatusBadge";
 import Table from "@/components/Table/Table";
 import styles from "@/components/page.module.css";
-import { getSession } from "@/lib/auth";
+import { requireSession } from "@/lib/auth";
+import {
+  hasPermission,
+  isAdminRole,
+  isAppAllowed,
+  isDomainAllowed,
+  type SessionPermissionView,
+} from "@/lib/permissions";
 import {
   startAppAction,
   stopAppAction,
@@ -37,12 +47,106 @@ export const dynamic = "force-dynamic";
 
 type PortSiteRow = { domain: string; upstream_port: number };
 
+function QuickToolsBar({
+  appName,
+  subdomain,
+  session,
+}: {
+  appName: string;
+  subdomain: string;
+  session: SessionPermissionView;
+}) {
+  const canFiles = hasPermission(session, "files");
+  const canLogs = hasPermission(session, "logs");
+  const canTerminal = hasPermission(session, "terminal");
+  const canDatabases = hasPermission(session, "databases");
+  if (!subdomain && !canFiles && !canLogs && !canTerminal && !canDatabases) {
+    return null;
+  }
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 8,
+        marginBottom: 16,
+      }}
+    >
+      {subdomain && (
+        <a
+          href={`https://${subdomain}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={styles.btnGhost}
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "none" }}
+        >
+          <ExternalLink size={14} />
+          Open Live Site
+        </a>
+      )}
+      {canFiles && (
+        <Link
+          href={`/files/apps?path=${encodeURIComponent(appName)}`}
+          className={styles.btnGhost}
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "none" }}
+        >
+          <FolderOpen size={14} />
+          Files
+        </Link>
+      )}
+      {canLogs && (
+        <Link
+          href={`/logs?unit=${encodeURIComponent(`vps-app-${appName}.service`)}`}
+          className={styles.btnGhost}
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "none" }}
+        >
+          <ScrollText size={14} />
+          Live Logs
+        </Link>
+      )}
+      {canTerminal && (
+        <Link
+          href="/terminal"
+          className={styles.btnGhost}
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "none" }}
+        >
+          <Terminal size={14} />
+          Terminal
+        </Link>
+      )}
+      {canDatabases && (
+        <Link
+          href="/databases"
+          className={styles.btnGhost}
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, textDecoration: "none" }}
+        >
+          <Database size={14} />
+          Databases
+        </Link>
+      )}
+    </div>
+  );
+}
+
 export default async function AppDetailPage({
   params,
 }: {
   params: Promise<{ name: string }>;
 }) {
   const { name } = await params;
+  const session = await requireSession();
+  if (!hasPermission(session, "apps") || !isAppAllowed(session, name)) {
+    return (
+      <AccessRestricted
+        title="App access restricted"
+        message={`You do not have permission to view or manage "${name}".`}
+        backHref="/apps"
+        backLabel="Back to apps"
+      />
+    );
+  }
+
   let app;
   try {
     app = await agent.apps.get(name);
@@ -55,10 +159,8 @@ export default async function AppDetailPage({
   const stop = stopAppAction.bind(null, name);
   const restart = restartAppAction.bind(null, name);
   const updateRepoUrl = updateAppRepoUrlAction.bind(null, name);
-  // Secrets are for admins only (who are also the only ones the forms let
-  // save): the project env files, and a token in the repository URL
-  // (https://user:token@host/...), which is left out for everyone else.
-  const isAdmin = (await getSession())?.role === "admin";
+  const isAdmin = isAdminRole(session.role);
+  const canManage = isAdmin || hasPermission(session, "apps");
   const savedRepoUrl = (await getAppRepoUrl(name)) ?? "";
   const initialRepoUrl = isAdmin
     ? savedRepoUrl
@@ -71,11 +173,12 @@ export default async function AppDetailPage({
   const isDocker = app.runtime === "docker";
   const setDomain = setAppDomainAction.bind(null, name);
 
-  // Routing slots for the Domain picker (panel apps) and the recovery form
-  // (external apps). Slots bound to another app or sitting on a quick-install
-  // service port are left out entirely, not shown greyed.
+  const hasDomainScope =
+    !isAdmin && (session.permissions.scopes?.domains?.length ?? 0) > 0;
   const allSlots = listRoutingSlots();
-  const freeSlots = freeSlotsFor(name, allSlots);
+  const freeSlots = freeSlotsFor(name, allSlots).filter(
+    (s) => !hasDomainScope || isDomainAllowed(session, s.domain),
+  );
   const unavailableSlots = allSlots.flatMap((s) => {
     const reason = slotUnavailableReason(s, name);
     return reason ? [{ domain: s.domain, reason }] : [];
@@ -83,30 +186,18 @@ export default async function AppDetailPage({
   const currentSlot = app.subdomain
     ? { domain: app.subdomain, port: app.port }
     : null;
-  // subdomain '' + port 0 is the marker applyAppRouting writes on unassign.
   const unassigned = !isExternal && !app.subdomain;
 
-  // Project `.env*` files live inside the source dir. Skip the fetch when the
-  // folder doesn't exist (the agent would just 404); the component falls back
-  // to a client-side load + inline error if this comes back null.
-  // External apps get the deploy form's own editor, which loads by itself.
   const initialEnvFiles =
-    app.source_dir_state === "missing" || isDocker || isExternal || !isAdmin
+    app.source_dir_state === "missing" || isDocker || isExternal || !canManage
       ? null
       : await agent.apps.listEnvFiles(name).catch(() => null);
 
-  // Snapshot the git state for the Updates section. Skip for external apps
-  // (no panel-managed repo URL stored) and skip when there's no code on
-  // disk — git would just error.
   let gitStatus: GitStatusResp | undefined;
-  // A Docker app built from Git has a checkout like a Node app.
   if (!isExternal && (!isDocker || app.docker_build) && !sourceMissing) {
     gitStatus = await agent.apps.gitStatus(name).catch(() => undefined);
   }
 
-  // Recovery form needs port-mode sites (routing slots) + root deploy keys —
-  // same data shape /apps/new uses. Only fetch when actually rendering
-  // the form to keep panel-managed page loads cheap.
   let portSites: PortSiteRow[] = [];
   let rootKeypairs: string[] = [];
   if (isExternal) {
@@ -123,9 +214,6 @@ export default async function AppDetailPage({
   }
 
   if (isExternal) {
-    // The panel writes the app row only on Deploy, so an app pulled /
-    // installed / built from the deploy form but not deployed yet lands here
-    // too. Without a unit of its own it is that, not someone else's app.
     const notDeployed = !app.active;
     return (
       <div>
@@ -139,6 +227,8 @@ export default async function AppDetailPage({
             </div>
           </div>
         </div>
+
+        <QuickToolsBar appName={app.name} subdomain={app.subdomain} session={session} />
 
         <div
           style={{
@@ -190,9 +280,6 @@ export default async function AppDetailPage({
           </div>
         </div>
 
-        {/* The deploy form carries the Project env files editor itself
-            once the folder has code; a second one here showed every file
-            twice. */}
         <div className={styles.section}>
           <h2 className={styles.sectionTitle}>
             {notDeployed ? "Finish deploying" : "Set up panel management"}
@@ -221,14 +308,10 @@ export default async function AppDetailPage({
   }
 
   if (isDocker) {
-    const [info, session, dockerStatus] = await Promise.all([
+    const [info, dockerStatus] = await Promise.all([
       agent.apps.dockerInfo(name).catch(() => null),
-      getSession(),
       agent.docker.status().catch(() => ({ installed: false, running: false, version: null })),
     ]);
-    // The env file holds secrets: read it for admins only, who are also the
-    // only ones the settings form would let save.
-    const canManage = session?.role === "admin";
     const env = canManage ? await agent.apps.getEnv(name).then((r) => r.env).catch(() => []) : [];
     const spec = info?.spec;
     return (
@@ -267,6 +350,8 @@ export default async function AppDetailPage({
             />
           </div>
         </div>
+
+        <QuickToolsBar appName={app.name} subdomain={app.subdomain} session={session} />
 
         {!info && (
           <div className={styles.notice} style={{ marginBottom: 16 }}>
@@ -437,6 +522,7 @@ export default async function AppDetailPage({
         <div>
           <h1 className={styles.title}>{app.name}</h1>
           <div className={styles.subtitle}>
+            <StatusBadge text={app.runtime || "custom"} tone="info" />{" "}
             {unassigned ? (
               <>
                 <StatusBadge text="no domain" tone="warn" />{" "}
@@ -463,6 +549,8 @@ export default async function AppDetailPage({
           />
         </div>
       </div>
+
+      <QuickToolsBar appName={app.name} subdomain={app.subdomain} session={session} />
 
       {sourceMissing && (
         <div
@@ -552,8 +640,8 @@ export default async function AppDetailPage({
             Source folder is missing - env files appear here once code is in
             place.
           </p>
-        ) : !isAdmin ? (
-          <p className={styles.muted}>Only admins can read the project env files.</p>
+        ) : !canManage ? (
+          <p className={styles.muted}>You do not have permission to read project env files.</p>
         ) : (
           <EnvFilesEditor name={name} initialData={initialEnvFiles} />
         )}

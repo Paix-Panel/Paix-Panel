@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { agent, type TailscaleOptions, type TailscaleStatus } from "@/lib/agent";
-import { requireSession } from "@/lib/auth";
+import { isAdminRole, requireSession } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 import { agentErrorMessage } from "@/lib/redirects";
 
@@ -20,7 +20,7 @@ const NAME = /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/;
  */
 async function admin() {
   const s = await requireSession();
-  return s.role === "admin" ? s : null;
+  return isAdminRole(s.role) ? s : null;
 }
 
 function agentError(e: unknown): string {

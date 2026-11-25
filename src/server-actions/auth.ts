@@ -25,6 +25,7 @@ type UserRow = {
   totp_secret: string | null;
   totp_enabled: number;
   role: string;
+  is_active: number;
 };
 
 export async function loginAction(_prev: ActionResult | null, fd: FormData): Promise<ActionResult> {
@@ -48,7 +49,10 @@ export async function loginAction(_prev: ActionResult | null, fd: FormData): Pro
   const attempt = recordLoginAttempt(ip, email, false);
 
   const user = db()
-    .prepare(`SELECT id, email, password_hash, totp_secret, totp_enabled, role FROM users WHERE email = ?`)
+    .prepare(
+      `SELECT id, email, password_hash, totp_secret, totp_enabled, role, is_active
+         FROM users WHERE email = ?`,
+    )
     .get(email) as UserRow | undefined;
   if (!user) {
     // Same argon2 work as a real check, so the response time does not tell
@@ -58,12 +62,19 @@ export async function loginAction(_prev: ActionResult | null, fd: FormData): Pro
     return { ok: false, error: "invalid email or password" };
   }
 
+  if (!user.is_active) {
+    await verifyPassword(await dummyPasswordHash(), password);
+    writeAudit({ actorId: user.id, action: "login.fail", target: email, result: "error", message: "account suspended" });
+    return { ok: false, error: "account is suspended — contact an administrator" };
+  }
+
   const ok = await verifyPassword(user.password_hash, password);
   if (!ok) {
     writeAudit({ actorId: user.id, action: "login.fail", target: email, result: "error", message: "bad password" });
     return { ok: false, error: "invalid email or password" };
   }
   markLoginSucceeded(attempt);
+  db().prepare(`UPDATE users SET last_login_at = datetime('now') WHERE id = ?`).run(user.id);
 
   const needsTotp = Boolean(user.totp_enabled);
   const issued = await issueSession(user.id, user.email, user.role, needsTotp, remember);

@@ -1,5 +1,7 @@
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
 import { agent } from "@/lib/agent";
-import { requireAdmin } from "@/lib/auth";
+import { requireSession } from "@/lib/auth";
+import { hasPermission } from "@/lib/permissions";
 import { config } from "@/lib/config";
 import { historyForPath, normalizePath } from "@/lib/terminalHistory";
 import styles from "@/components/page.module.css";
@@ -9,19 +11,20 @@ export const dynamic = "force-dynamic";
 
 const DEFAULT_PATH = "/srv/apps";
 
-/**
- * /terminal — filesystem tree, console, per-folder history.
- *
- * `?path=` lets other pages deep-link here already pointed at a folder (an
- * app's source dir, say). The tree is the source of truth for the working
- * directory from then on.
- */
 export default async function TerminalPage({
   searchParams,
 }: {
   searchParams: Promise<{ path?: string }>;
 }) {
-  const session = await requireAdmin();
+  const session = await requireSession();
+  if (!hasPermission(session, "terminal")) {
+    return (
+      <AccessRestricted
+        title="Terminal access restricted"
+        message="You do not have permission to use the web terminal."
+      />
+    );
+  }
   const sp = await searchParams;
   const path = normalizePath(
     sp.path && sp.path.startsWith("/") ? sp.path : DEFAULT_PATH,

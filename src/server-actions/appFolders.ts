@@ -2,7 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { requireSession } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
+import { isAppAllowed } from "@/lib/permissions";
 import { writeAudit } from "@/lib/audit";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -22,7 +23,7 @@ const MAX_NAME_LEN = 60;
  * to satisfy "use server" — the SQLite read itself is synchronous.
  */
 export async function listAppFolders(): Promise<AppFolderRow[]> {
-  await requireSession();
+  await requirePermission("apps");
   return db()
     .prepare(
       `SELECT id, name, sort_order, collapsed
@@ -34,19 +35,18 @@ export async function listAppFolders(): Promise<AppFolderRow[]> {
 
 /**
  * Map of app name → folder_id (or null) for all panel-managed app rows.
- * Read directly off `apps` because the agent's apps.list() doesn't expose
- * folder_id (it's a panel-only display concern, not something the agent
- * needs to know about).
  */
 export async function listAppFolderAssignments(): Promise<
   Record<string, number | null>
 > {
-  await requireSession();
+  const s = await requirePermission("apps");
   const rows = db()
     .prepare(`SELECT name, folder_id FROM apps`)
     .all() as { name: string; folder_id: number | null }[];
   const out: Record<string, number | null> = {};
-  for (const r of rows) out[r.name] = r.folder_id;
+  for (const r of rows) {
+    if (isAppAllowed(s, r.name)) out[r.name] = r.folder_id;
+  }
   return out;
 }
 
@@ -54,7 +54,7 @@ export async function createAppFolderAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
-  const s = await requireSession();
+  const s = await requirePermission("apps");
   const name = String(fd.get("name") ?? "").trim();
   if (!name) return { ok: false, error: "name required" };
   if (name.length > MAX_NAME_LEN) {
@@ -89,7 +89,7 @@ export async function renameAppFolderAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
-  const s = await requireSession();
+  const s = await requirePermission("apps");
   const name = String(fd.get("name") ?? "").trim();
   if (!name) return { ok: false, error: "name required" };
   if (name.length > MAX_NAME_LEN) {
@@ -125,7 +125,7 @@ export async function renameAppFolderAction(
  * gone, so a double-click on the delete button doesn't throw.
  */
 export async function deleteAppFolderAction(folderId: number): Promise<void> {
-  const s = await requireSession();
+  const s = await requirePermission("apps");
   const target = db()
     .prepare(`SELECT name FROM app_folders WHERE id = ?`)
     .get(folderId) as { name: string } | undefined;
@@ -153,7 +153,10 @@ export async function setAppFolderAction(
   appName: string,
   folderId: number | null,
 ): Promise<ActionResult> {
-  const s = await requireSession();
+  const s = await requirePermission("apps");
+  if (!isAppAllowed(s, appName)) {
+    return { ok: false, error: "Forbidden: app not assigned to your account." };
+  }
   if (folderId !== null) {
     const exists = db()
       .prepare(`SELECT id FROM app_folders WHERE id = ?`)
@@ -189,7 +192,7 @@ export async function setAppFolderAction(
 export async function toggleAppFolderCollapsedAction(
   folderId: number,
 ): Promise<void> {
-  await requireSession();
+  await requirePermission("apps");
   const row = db()
     .prepare(`SELECT collapsed FROM app_folders WHERE id = ?`)
     .get(folderId) as { collapsed: number } | undefined;

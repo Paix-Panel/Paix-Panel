@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { agent, AgentError, type SshRootLogin } from "@/lib/agent";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 import { agentErrorMessage } from "@/lib/redirects";
 
@@ -50,7 +50,7 @@ export async function setSshServerConfigAction(
   _prev: SshConfigResult | null,
   fd: FormData,
 ): Promise<SshConfigResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("security");
   const str = (k: string) => String(fd.get(k) ?? "").trim();
 
   // Only fields that differ from the live values (the form's current_*
@@ -139,7 +139,7 @@ export async function addSshKeyAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("security");
   const user = String(fd.get("user") ?? "").trim();
   const key = String(fd.get("key") ?? "").trim();
   const label = String(fd.get("label") ?? "").trim() || undefined;
@@ -166,7 +166,7 @@ export async function removeSshKeyAction(
   fp: string,
   purgeKeypair?: string,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("security");
   try {
     await agent.ssh.remove(fp, user, purgeKeypair);
   } catch (e: unknown) {
@@ -197,7 +197,7 @@ export async function fetchSshPublicKeyAction(
   user: string,
   fp: string,
 ): Promise<{ ok: true; content: string } | { ok: false; error: string }> {
-  const s = await requireAdmin();
+  const s = await requirePermission("security");
   try {
     const resp = await agent.ssh.getPublicKey(fp, user);
     writeAudit({
@@ -219,7 +219,7 @@ export async function fetchSshPrivateKeyAction(
   user: string,
   name: string,
 ): Promise<{ ok: true; content: string } | { ok: false; error: string }> {
-  const s = await requireAdmin();
+  const s = await requirePermission("security");
   try {
     const resp = await agent.ssh.getPrivateKey(user, name);
     writeAudit({
@@ -247,7 +247,7 @@ export async function updateSshPublicKeyAction(
   fp: string,
   content: string,
 ): Promise<{ ok: true; fingerprint: string | null } | { ok: false; error: string }> {
-  const s = await requireAdmin();
+  const s = await requirePermission("security");
   try {
     const resp = await agent.ssh.updatePublicKey(fp, user, content);
     writeAudit({
@@ -282,7 +282,7 @@ async function fetchSshFile(
   user: string,
   which: "authorized_keys" | "config",
 ): Promise<FileFetchResult> {
-  await requireAdmin();
+  await requirePermission("security");
   try {
     const resp =
       which === "authorized_keys"
@@ -299,7 +299,7 @@ async function saveSshFile(
   which: "authorized_keys" | "config",
   content: string,
 ): Promise<FileSaveResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("security");
   try {
     if (which === "authorized_keys") {
       await agent.ssh.putAuthorizedKeysFile(user, content);
@@ -347,7 +347,7 @@ export async function updateSshPrivateKeyAction(
   name: string,
   content: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const s = await requireAdmin();
+  const s = await requirePermission("security");
   try {
     await agent.ssh.updatePrivateKey(user, name, content);
     writeAudit({
@@ -386,7 +386,7 @@ export async function generateSshKeypairAction(
   _prev: GenerateKeypairResult | null,
   fd: FormData,
 ): Promise<GenerateKeypairResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("security");
   const user = String(fd.get("user") ?? "").trim();
   const name = String(fd.get("name") ?? "").trim().toLowerCase();
 

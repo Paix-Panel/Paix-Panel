@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 import { randomUUID } from "node:crypto";
 import {
@@ -43,7 +43,7 @@ export async function setThemeAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("settings");
   const raw = String(fd.get("theme") ?? "").trim();
   if (!raw) return { ok: false, error: "no theme submitted" };
 
@@ -101,7 +101,7 @@ export async function saveThemeAsAction(
   rawName: string,
   rawConfig: string,
 ): Promise<SaveThemeResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("settings");
   const name = normalizeThemeName(String(rawName ?? ""));
   if (!name) return { ok: false, error: "give the theme a name" };
 
@@ -134,7 +134,7 @@ export async function updateSavedThemeAction(
   id: string,
   rawConfig: string,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("settings");
   const list = getThemeLibrary();
   const found = list.find((t) => t.id === id);
   if (!found) return { ok: false, error: "that theme no longer exists" };
@@ -159,7 +159,7 @@ export async function renameSavedThemeAction(
   id: string,
   rawName: string,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("settings");
   const name = normalizeThemeName(String(rawName ?? ""));
   if (!name) return { ok: false, error: "give the theme a name" };
 
@@ -188,7 +188,7 @@ export async function renameSavedThemeAction(
  * repaint their panel out from under them.
  */
 export async function deleteSavedThemeAction(id: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("settings");
   const list = getThemeLibrary();
   const found = list.find((t) => t.id === id);
   if (!found) return { ok: true };

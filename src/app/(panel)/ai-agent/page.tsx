@@ -1,3 +1,6 @@
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
+import { requireSession } from "@/lib/auth";
+import { isAdminRole } from "@/lib/permissions";
 import { config } from "@/lib/config";
 import { getServerAddress } from "@/lib/serverAddress";
 import { getMcpTokenInfo } from "@/lib/mcpToken";
@@ -20,8 +23,16 @@ export const dynamic = "force-dynamic";
 type PreviewTool = Omit<Tool, "call">;
 
 export default async function AiAgentPage() {
-  // The token is stored only as a hash, so the config snippet carries a
-  // placeholder for it.
+  const session = await requireSession();
+  if (!isAdminRole(session.role)) {
+    return (
+      <AccessRestricted
+        title="MCP access restricted"
+        message="Only administrators can manage Model Context Protocol credentials and tools."
+      />
+    );
+  }
+
   const resolved = getMcpTokenInfo();
   const token = resolved ? "<YOUR_MCP_TOKEN>" : null;
   const tokenSource = resolved?.source ?? null;

@@ -257,9 +257,42 @@ function migrateNotificationsSchema(handle: Database.Database) {
 function migrateUsersSchema(handle: Database.Database) {
   const cols = handle.prepare("PRAGMA table_info(users)").all() as ColumnInfo[];
   if (cols.length === 0) return;
-  if (!cols.some((c) => c.name === "totp_last_step")) {
+  const names = new Set(cols.map((c) => c.name));
+  if (!names.has("totp_last_step")) {
     // Last accepted TOTP time step, so a code is accepted only once.
     handle.exec("ALTER TABLE users ADD COLUMN totp_last_step INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!names.has("display_name")) {
+    handle.exec("ALTER TABLE users ADD COLUMN display_name TEXT NOT NULL DEFAULT ''");
+  }
+  if (!names.has("permissions_json")) {
+    handle.exec(
+      `ALTER TABLE users ADD COLUMN permissions_json TEXT NOT NULL DEFAULT '{"modules":[]}'`,
+    );
+  }
+  if (!names.has("google_enabled")) {
+    handle.exec("ALTER TABLE users ADD COLUMN google_enabled INTEGER NOT NULL DEFAULT 1");
+  }
+  if (!names.has("google_sub")) {
+    handle.exec("ALTER TABLE users ADD COLUMN google_sub TEXT");
+  }
+  if (!names.has("is_active")) {
+    handle.exec("ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1");
+  }
+  if (!names.has("last_login_at")) {
+    handle.exec("ALTER TABLE users ADD COLUMN last_login_at TEXT");
+  }
+  // Ensure at least one super_admin exists when migrating from legacy single-admin installs.
+  const superCount = handle
+    .prepare(`SELECT COUNT(*) AS c FROM users WHERE role = 'super_admin'`)
+    .get() as { c: number };
+  if (superCount.c === 0) {
+    const firstAdmin = handle
+      .prepare(`SELECT id FROM users WHERE role = 'admin' ORDER BY id ASC LIMIT 1`)
+      .get() as { id: number } | undefined;
+    if (firstAdmin) {
+      handle.prepare(`UPDATE users SET role = 'super_admin' WHERE id = ?`).run(firstAdmin.id);
+    }
   }
 }
 

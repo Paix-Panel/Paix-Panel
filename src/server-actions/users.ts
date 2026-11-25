@@ -2,100 +2,197 @@
 
 import { revalidatePath } from "next/cache";
 import { agent, type SystemUserRow } from "@/lib/agent";
-import { requireSession } from "@/lib/auth";
+import { isAdminRole, isSuperAdmin, requireSession } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { hashPassword } from "@/lib/crypto";
+import {
+  emptyPermissions,
+  normalizeRole,
+  PERMISSION_KEYS,
+  serializePermissions,
+  USER_ROLES,
+  type PermissionKey,
+  type UserRole,
+} from "@/lib/permissions";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
-// Linux account names: useradd's default NAME_REGEX. Kept in lockstep with
-// the same constant in agent/src/handlers/system.rs::is_safe_unix_name so the
-// panel can reject obvious bad input before the round trip to the socket.
 const UNIX_NAME_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 export type PanelUserRow = {
   id: number;
   email: string;
+  display_name: string;
   role: string;
+  permissions_json: string;
+  google_enabled: number;
+  is_active: number;
   totp_enabled: number;
+  last_login_at: string | null;
   created_at: string;
 };
 
-const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-const VALID_ROLES = ["admin", "user"] as const;
-type Role = (typeof VALID_ROLES)[number];
+export type AssignableResources = {
+  apps: string[];
+  domains: string[];
+  databases: string[];
+};
 
-/**
- * Read helper: returns every panel-login user (`users` table) ordered by id.
- * Used by the /users page server component to render the table. `async`
- * to satisfy "use server" — the SQLite read itself is synchronous.
- */
+function parseFormPermissions(fd: FormData): string {
+  const validModuleSet = new Set<string>(PERMISSION_KEYS);
+  const modules = fd
+    .getAll("modules")
+    .map((v) => String(v).trim())
+    .filter((m): m is PermissionKey => validModuleSet.has(m));
+
+  const readScopeField = (field: string): string[] | undefined => {
+    const picked = fd
+      .getAll(field)
+      .flatMap((v) => String(v).split(","))
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    return picked.length > 0 ? Array.from(new Set(picked)) : undefined;
+  };
+
+  const apps = readScopeField("scope_apps");
+  const domains = readScopeField("scope_domains");
+  const databases = readScopeField("scope_databases");
+
+  return serializePermissions({
+    modules,
+    scopes: {
+      ...(apps ? { apps } : {}),
+      ...(domains ? { domains } : {}),
+      ...(databases ? { databases } : {}),
+    },
+  });
+}
+
 export async function listPanelUsers(): Promise<PanelUserRow[]> {
-  await requireSession();
+  const s = await requireSession();
+  if (!isAdminRole(s.role)) {
+    throw new Error("forbidden: admin role required");
+  }
   return db()
     .prepare(
-      `SELECT id, email, role, totp_enabled, created_at
-         FROM users ORDER BY id ASC`,
+      `SELECT id, email, display_name, role, permissions_json,
+              google_enabled, is_active, totp_enabled, last_login_at, created_at
+         FROM users ORDER BY
+           CASE role WHEN 'super_admin' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,
+           id ASC`,
     )
     .all() as PanelUserRow[];
 }
 
-/**
- * Create a new panel-login user. Admin-only — non-admins shouldn't be
- * able to grant access to the panel. On success the operator can immediately
- * sign in with the new credentials.
- */
+export async function listAssignableResources(): Promise<AssignableResources> {
+  const s = await requireSession();
+  if (!isAdminRole(s.role)) {
+    return { apps: [], domains: [], databases: [] };
+  }
+  const appRows = db()
+    .prepare(`SELECT name FROM apps ORDER BY name ASC`)
+    .all() as { name: string }[];
+  const domainRows = db()
+    .prepare(
+      `SELECT name FROM domains
+       UNION
+       SELECT domain AS name FROM sites
+       ORDER BY name ASC`,
+    )
+    .all() as { name: string }[];
+
+  const [mariaDbs, pgDbs] = await Promise.all([
+    agent.databases.listDatabases().catch(() => []),
+    agent.postgres.listDatabases().catch(() => []),
+  ]);
+  const dbSet = new Set<string>([
+    ...mariaDbs.map((d) => d.name),
+    ...pgDbs.map((d) => d.name),
+  ]);
+
+  return {
+    apps: appRows.map((r) => r.name),
+    domains: domainRows.map((r) => r.name),
+    databases: Array.from(dbSet).sort(),
+  };
+}
+
 export async function createPanelUserAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
   const s = await requireSession();
-  if (s.role !== "admin") {
+  if (!isAdminRole(s.role)) {
     return { ok: false, error: "admin role required" };
   }
   const email = String(fd.get("email") ?? "").trim().toLowerCase();
+  const displayName = String(fd.get("display_name") ?? "").trim().slice(0, 80);
   const password = String(fd.get("password") ?? "");
   const confirm = String(fd.get("confirm") ?? "");
-  const roleRaw = String(fd.get("role") ?? "admin").trim().toLowerCase();
+  const googleEnabled = fd.get("google_enabled") === "on" ? 1 : 0;
+  const roleRaw = String(fd.get("role") ?? "user").trim().toLowerCase();
 
   if (!email) return { ok: false, error: "email required" };
   if (!EMAIL_RE.test(email)) return { ok: false, error: "invalid email" };
   if (email.length > 254) return { ok: false, error: "email too long" };
-  if (password.length < 12) {
-    return { ok: false, error: "password must be at least 12 characters" };
-  }
-  if (password !== confirm) {
-    return { ok: false, error: "passwords do not match" };
-  }
-  if (/[\r\n]/.test(password)) {
-    return { ok: false, error: "password must not contain newlines" };
-  }
-  if (!(VALID_ROLES as readonly string[]).includes(roleRaw)) {
+
+  if (!(USER_ROLES as readonly string[]).includes(roleRaw)) {
     return { ok: false, error: "invalid role" };
   }
-  const role = roleRaw as Role;
+  const role = roleRaw as UserRole;
+
+  if ((role === "admin" || role === "super_admin") && !isSuperAdmin(s.role)) {
+    return { ok: false, error: "only a Super Admin can create Admin or Super Admin accounts" };
+  }
+
+  // Either password or Google SSO must be enabled
+  if (!password && !googleEnabled) {
+    return {
+      ok: false,
+      error: "provide a password (min 12 chars) or enable Google Sign-In for this user",
+    };
+  }
+  if (password) {
+    if (password.length < 12) {
+      return { ok: false, error: "password must be at least 12 characters" };
+    }
+    if (password !== confirm) {
+      return { ok: false, error: "passwords do not match" };
+    }
+    if (/[\r\n]/.test(password)) {
+      return { ok: false, error: "password must not contain newlines" };
+    }
+  }
 
   const existing = db()
-    .prepare(`SELECT id FROM users WHERE email = ?`)
+    .prepare(`SELECT id FROM users WHERE LOWER(email) = ?`)
     .get(email) as { id: number } | undefined;
   if (existing) {
     return { ok: false, error: "a user with that email already exists" };
   }
 
+  const permissionsJson =
+    role === "user"
+      ? parseFormPermissions(fd)
+      : serializePermissions(emptyPermissions());
+
   try {
-    const hash = await hashPassword(password);
+    const hash = password ? await hashPassword(password) : "!google-oauth-only!";
     db()
       .prepare(
-        `INSERT INTO users (email, password_hash, role) VALUES (?, ?, ?)`,
+        `INSERT INTO users
+          (email, display_name, password_hash, role, permissions_json, google_enabled, is_active)
+         VALUES (?, ?, ?, ?, ?, ?, 1)`,
       )
-      .run(email, hash, role);
+      .run(email, displayName, hash, role, permissionsJson, googleEnabled);
     writeAudit({
       actorId: s.userId,
       action: "users.panel.create",
       target: email,
       result: "ok",
-      message: `role=${role}`,
+      message: `role=${role} google=${googleEnabled}`,
     });
     revalidatePath("/users");
     return { ok: true };
@@ -112,20 +209,100 @@ export async function createPanelUserAction(
   }
 }
 
-/**
- * Admin-reset for another panel user's password. Revokes all live sessions
- * for that user so the next request bounces them to /login — prevents a
- * stale session from outliving the password change. The current user can't
- * reset their OWN password here (use /settings → change password, which
- * requires the existing password as a defense-in-depth check).
- */
+export async function updatePanelUserPermissionsAction(
+  userId: number,
+  _prev: ActionResult | null,
+  fd: FormData,
+): Promise<ActionResult> {
+  const s = await requireSession();
+  if (!isAdminRole(s.role)) {
+    return { ok: false, error: "admin role required" };
+  }
+  if (userId === s.userId) {
+    return { ok: false, error: "cannot modify your own role or permissions here" };
+  }
+
+  const target = db()
+    .prepare(`SELECT id, email, role, is_active FROM users WHERE id = ?`)
+    .get(userId) as
+    | { id: number; email: string; role: string; is_active: number }
+    | undefined;
+  if (!target) return { ok: false, error: "user not found" };
+
+  const targetRole = normalizeRole(target.role);
+  if ((targetRole === "super_admin" || targetRole === "admin") && !isSuperAdmin(s.role)) {
+    return {
+      ok: false,
+      error: "only a Super Admin can modify an Admin or Super Admin account",
+    };
+  }
+
+  const nextRoleRaw = String(fd.get("role") ?? targetRole).trim().toLowerCase();
+  if (!(USER_ROLES as readonly string[]).includes(nextRoleRaw)) {
+    return { ok: false, error: "invalid role" };
+  }
+  const nextRole = nextRoleRaw as UserRole;
+  if (nextRole !== targetRole && !isSuperAdmin(s.role)) {
+    return { ok: false, error: "only a Super Admin can change a user's role" };
+  }
+
+  const displayName = String(fd.get("display_name") ?? "").trim().slice(0, 80);
+  const googleEnabled = fd.get("google_enabled") === "on" ? 1 : 0;
+  const isActive = fd.get("is_active") === "on" ? 1 : 0;
+
+  if (targetRole === "super_admin" && (nextRole !== "super_admin" || isActive === 0)) {
+    const otherSupers = db()
+      .prepare(
+        `SELECT COUNT(*) AS c FROM users
+          WHERE role = 'super_admin' AND is_active = 1 AND id != ?`,
+      )
+      .get(userId) as { c: number };
+    if (otherSupers.c === 0) {
+      return { ok: false, error: "cannot demote or suspend the last active Super Admin" };
+    }
+  }
+
+  const permissionsJson =
+    nextRole === "user"
+      ? parseFormPermissions(fd)
+      : serializePermissions(emptyPermissions());
+
+  db()
+    .prepare(
+      `UPDATE users
+          SET display_name = ?,
+              role = ?,
+              permissions_json = ?,
+              google_enabled = ?,
+              is_active = ?
+        WHERE id = ?`,
+    )
+    .run(displayName, nextRole, permissionsJson, googleEnabled, isActive, userId);
+
+  if (!isActive) {
+    db()
+      .prepare(`UPDATE sessions SET revoked = 1 WHERE user_id = ? AND revoked = 0`)
+      .run(userId);
+  }
+
+  writeAudit({
+    actorId: s.userId,
+    action: "users.panel.permissions",
+    target: target.email,
+    result: "ok",
+    message: `role=${nextRole} active=${isActive} google=${googleEnabled}`,
+  });
+  revalidatePath("/users");
+  return { ok: true };
+}
+
 export async function resetPanelUserPasswordAction(
   userId: number,
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
   const s = await requireSession();
-  if (s.role !== "admin") {
+  if (!isAdminRole(s.role)) {
     return { ok: false, error: "admin role required" };
   }
   if (userId === s.userId) {
@@ -147,16 +324,17 @@ export async function resetPanelUserPasswordAction(
   }
 
   const target = db()
-    .prepare(`SELECT email FROM users WHERE id = ?`)
-    .get(userId) as { email: string } | undefined;
+    .prepare(`SELECT email, role FROM users WHERE id = ?`)
+    .get(userId) as { email: string; role: string } | undefined;
   if (!target) return { ok: false, error: "user not found" };
+
+  if (isAdminRole(target.role) && !isSuperAdmin(s.role)) {
+    return { ok: false, error: "only a Super Admin can reset another Admin's password" };
+  }
 
   try {
     const hash = await hashPassword(password);
-    db()
-      .prepare(`UPDATE users SET password_hash = ? WHERE id = ?`)
-      .run(hash, userId);
-    // Force re-login on every device for the targeted user.
+    db().prepare(`UPDATE users SET password_hash = ? WHERE id = ?`).run(hash, userId);
     db()
       .prepare(`UPDATE sessions SET revoked = 1 WHERE user_id = ? AND revoked = 0`)
       .run(userId);
@@ -181,19 +359,9 @@ export async function resetPanelUserPasswordAction(
   }
 }
 
-/**
- * Delete a panel user. Self-protection plus a last-admin guard so the
- * operator can't lock themselves out of the panel by removing the only
- * account that can log in. Sessions for the deleted user are explicitly
- * marked revoked first so any open browser tab gets bounced on its next
- * request, even if the DELETE FROM sessions cascades silently.
- *
- * A refusal is returned, not thrown: Next replaces a thrown message in a
- * production build, and the dialog promises the reason.
- */
 export async function deletePanelUserAction(userId: number): Promise<ActionResult> {
   const s = await requireSession();
-  if (s.role !== "admin") return { ok: false, error: "admin role required" };
+  if (!isAdminRole(s.role)) return { ok: false, error: "admin role required" };
   if (userId === s.userId) return { ok: false, error: "cannot delete yourself" };
 
   const target = db()
@@ -201,9 +369,22 @@ export async function deletePanelUserAction(userId: number): Promise<ActionResul
     .get(userId) as { email: string; role: string } | undefined;
   if (!target) return { ok: false, error: "user not found" };
 
-  if (target.role === "admin") {
+  if (isAdminRole(target.role) && !isSuperAdmin(s.role)) {
+    return { ok: false, error: "only a Super Admin can delete Admin or Super Admin accounts" };
+  }
+
+  if (isSuperAdmin(target.role)) {
     const others = db()
-      .prepare(`SELECT COUNT(*) AS c FROM users WHERE role = 'admin' AND id != ?`)
+      .prepare(`SELECT COUNT(*) AS c FROM users WHERE role = 'super_admin' AND id != ?`)
+      .get(userId) as { c: number };
+    if (others.c === 0) {
+      return { ok: false, error: "cannot delete the last Super Admin" };
+    }
+  } else if (target.role === "admin") {
+    const others = db()
+      .prepare(
+        `SELECT COUNT(*) AS c FROM users WHERE role IN ('super_admin', 'admin') AND id != ?`,
+      )
       .get(userId) as { c: number };
     if (others.c === 0) {
       return { ok: false, error: "cannot delete the last admin" };
@@ -225,18 +406,12 @@ export async function deletePanelUserAction(userId: number): Promise<ActionResul
   return { ok: true };
 }
 
-// Reset the OS-level `root` password via the agent. Audit-logged. The actual
-// password is never stored anywhere by the panel — it only travels:
-//   browser  -- HTTPS -->  panel  -- unix socket -->  agent  --> chpasswd
-// SSH accepts it only when PasswordAuthentication is on and PermitRootLogin
-// is yes; otherwise it is only for the Hetzner/OVH web console. The /users
-// page reads the live sshd settings and says which case applies.
 export async function setRootPasswordAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
   const s = await requireSession();
-  if (s.role !== "admin") {
+  if (!isAdminRole(s.role)) {
     return { ok: false, error: "forbidden: admin role required" };
   }
   const password = String(fd.get("password") ?? "");
@@ -274,17 +449,9 @@ export async function setRootPasswordAction(
   }
 }
 
-// ─── Linux (system) users ────────────────────────────────────────────────
-
-/**
- * Read helper for the /users page server component: returns every Linux user
- * the agent's filter considers a candidate (root + UID >= 33, minus service
- * blocklist). The page splits these into "human" (root + UID >= 1000) and
- * service users for display. Empty list on socket / agent error so the page
- * still renders.
- */
 export async function listSystemUsers(): Promise<SystemUserRow[]> {
-  await requireSession();
+  const s = await requireSession();
+  if (!isAdminRole(s.role)) return [];
   try {
     return await agent.system.users();
   } catch {
@@ -292,19 +459,12 @@ export async function listSystemUsers(): Promise<SystemUserRow[]> {
   }
 }
 
-/**
- * Create a Linux account via the agent (`useradd -m` + `chpasswd`, optional
- * `usermod -aG sudo`). Admin-only — anyone with shell access on the host can
- * pivot to root if they're in the sudo group, so this is a privileged op.
- * The password travels: browser → HTTPS → panel → unix socket → agent →
- * chpasswd; it is never persisted by the panel.
- */
 export async function createSystemUserAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
   const s = await requireSession();
-  if (s.role !== "admin") {
+  if (!isAdminRole(s.role)) {
     return { ok: false, error: "admin role required" };
   }
 
@@ -360,19 +520,13 @@ export async function createSystemUserAction(
   }
 }
 
-/**
- * Reset an existing Linux user's password. Admin-only. Refuses `root`
- * (operators use the dedicated /system/root-password endpoint via
- * setRootPasswordAction). The agent does the same check; mirrored here so we
- * fail fast with a clearer message.
- */
 export async function setSystemUserPasswordAction(
   name: string,
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
   const s = await requireSession();
-  if (s.role !== "admin") {
+  if (!isAdminRole(s.role)) {
     return { ok: false, error: "admin role required" };
   }
   const target = name.trim().toLowerCase();
@@ -423,19 +577,12 @@ export async function setSystemUserPasswordAction(
   }
 }
 
-/**
- * Delete a Linux account via the agent's `userdel` wrapper. Admin-only.
- * `removeHome=true` passes `-r` to wipe /home/<name> and the mail spool;
- * default false leaves the home dir intact in case the operator changes
- * their mind. The agent itself refuses to touch `root` and reserved system
- * accounts; we mirror those guards client-side for a faster, clearer error.
- */
 export async function deleteSystemUserAction(
   name: string,
   removeHome: boolean,
 ): Promise<ActionResult> {
   const s = await requireSession();
-  if (s.role !== "admin") return { ok: false, error: "admin role required" };
+  if (!isAdminRole(s.role)) return { ok: false, error: "admin role required" };
   const target = name.trim().toLowerCase();
   if (!UNIX_NAME_RE.test(target)) return { ok: false, error: "invalid username" };
   if (target === "root") return { ok: false, error: "cannot delete root" };

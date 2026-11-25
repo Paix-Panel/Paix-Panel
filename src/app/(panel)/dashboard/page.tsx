@@ -1,4 +1,30 @@
+import Link from "next/link";
+import {
+  Boxes,
+  Clock,
+  Database,
+  FolderOpen,
+  Globe,
+  HardDrive,
+  Mail,
+  PlusSquare,
+  ScrollText,
+  Server,
+  Settings,
+  Shield,
+  Terminal,
+  Users,
+} from "lucide-react";
 import { agent } from "@/lib/agent";
+import { requireSession } from "@/lib/auth";
+import {
+  hasAnyPermission,
+  hasPermission,
+  isAdminRole,
+  isAppAllowed,
+  isDomainAllowed,
+  roleDisplayLabel,
+} from "@/lib/permissions";
 import { getServerAddress } from "@/lib/serverAddress";
 import HealthChart from "@/components/HealthChart/HealthChart";
 import Table from "@/components/Table/Table";
@@ -9,20 +35,32 @@ import { fetchLoadOne, fetchMemUsedPct } from "./samples";
 
 export const dynamic = "force-dynamic";
 
+type HubItem = {
+  href: string;
+  label: string;
+  sub: string;
+  icon: React.ReactNode;
+};
+
 export default async function DashboardPage() {
-  const [info, apps, certs, address] = await Promise.all([
+  const session = await requireSession();
+  const canApps = hasPermission(session, "apps");
+  const canDomains = hasPermission(session, "domains");
+  const canFolders = hasAnyPermission(session, ["files", "services"]);
+  const isAdmin = isAdminRole(session.role);
+
+  const [info, rawApps, rawCerts, address] = await Promise.all([
     agent.sysinfo().catch(() => null),
-    // null = the agent did not answer, which must not read as "0 apps" or
-    // "all healthy".
-    agent.apps.list().catch(() => null),
-    agent.ssl.list().catch(() => null),
+    canApps ? agent.apps.list().catch(() => null) : Promise.resolve(null),
+    canDomains ? agent.ssl.list().catch(() => null) : Promise.resolve(null),
     getServerAddress().catch(() => ({ domain: null, ip: null })),
   ]);
+
+  const apps = rawApps ? rawApps.filter((a) => isAppAllowed(session, a.name)) : null;
+  const certs = rawCerts ? rawCerts.filter((c) => isDomainAllowed(session, c.domain)) : null;
   const hasAddress = !!(address.domain || address.ip);
 
   const runningApps = apps?.filter((a) => a.sub === "running").length ?? 0;
-  // Orphan certs (site removed, cert kept) are not "expiring" in any sense
-  // the operator can act on - the agent flags them serving=false.
   const servingCerts = certs?.filter((c) => c.serving !== false) ?? [];
   const expiredCerts = servingCerts.filter((c) => c.days_remaining < 0).length;
   const expiringCerts = servingCerts.filter(
@@ -57,6 +95,120 @@ export default async function DashboardPage() {
         ? "warn"
         : "ok";
 
+  const hubItems: HubItem[] = [];
+  if (canApps) {
+    hubItems.push(
+      {
+        href: "/apps",
+        label: "Apps & Runtimes",
+        sub: "Manage apps & deployments",
+        icon: <Boxes size={16} />,
+      },
+      {
+        href: "/apps/new?method=github",
+        label: "Deploy New App",
+        sub: "Node, Python, PHP, Go & Docker",
+        icon: <PlusSquare size={16} />,
+      },
+    );
+  }
+  if (canDomains) {
+    hubItems.push({
+      href: "/domains",
+      label: "Domains & SSL",
+      sub: "Zones, nginx routing & HTTPS",
+      icon: <Globe size={16} />,
+    });
+  }
+  if (hasPermission(session, "databases")) {
+    hubItems.push({
+      href: "/databases",
+      label: "Databases",
+      sub: "MariaDB, PostgreSQL & SQL",
+      icon: <Database size={16} />,
+    });
+  }
+  if (hasPermission(session, "mail")) {
+    hubItems.push({
+      href: "/mailboxes",
+      label: "Mailboxes",
+      sub: "Email accounts & webmail",
+      icon: <Mail size={16} />,
+    });
+  }
+  if (hasPermission(session, "files")) {
+    hubItems.push({
+      href: "/files",
+      label: "File Manager",
+      sub: "Browse & edit app files",
+      icon: <FolderOpen size={16} />,
+    });
+  }
+  if (hasPermission(session, "backups")) {
+    hubItems.push({
+      href: "/backups",
+      label: "Backups",
+      sub: "Snapshots & disaster recovery",
+      icon: <HardDrive size={16} />,
+    });
+  }
+  if (hasPermission(session, "cron")) {
+    hubItems.push({
+      href: "/cron",
+      label: "Cron Jobs",
+      sub: "Scheduled tasks & timers",
+      icon: <Clock size={16} />,
+    });
+  }
+  if (hasPermission(session, "logs")) {
+    hubItems.push({
+      href: "/logs",
+      label: "Live Logs",
+      sub: "Journald & service tails",
+      icon: <ScrollText size={16} />,
+    });
+  }
+  if (hasPermission(session, "terminal")) {
+    hubItems.push({
+      href: "/terminal",
+      label: "Web Terminal",
+      sub: "Shell console access",
+      icon: <Terminal size={16} />,
+    });
+  }
+  if (hasPermission(session, "services")) {
+    hubItems.push({
+      href: "/services",
+      label: "Services & Scale",
+      sub: "Daemons & 20M+ scale addons",
+      icon: <Server size={16} />,
+    });
+  }
+  if (hasPermission(session, "security")) {
+    hubItems.push({
+      href: "/security",
+      label: "Security & UFW",
+      sub: "Firewall, SSH & fail2ban",
+      icon: <Shield size={16} />,
+    });
+  }
+  if (isAdmin) {
+    hubItems.push({
+      href: "/users",
+      label: "Users & SSO",
+      sub: "Roles, tasks & Google Auth",
+      icon: <Users size={16} />,
+    });
+  }
+  if (hasPermission(session, "settings")) {
+    hubItems.push({
+      href: "/settings",
+      label: "Settings",
+      sub: "Server, SSL email & Google SSO",
+      icon: <Settings size={16} />,
+    });
+  }
+
   return (
     <div>
       <div className={styles.head}>
@@ -79,7 +231,7 @@ export default async function DashboardPage() {
                   <>
                     {" "}
                     <span className={grid.serverHint}>
-                      (point your domain's nameservers here to activate)
+                      (point your domain&apos;s nameservers here to activate)
                     </span>
                   </>
                 )}
@@ -92,22 +244,30 @@ export default async function DashboardPage() {
               </>
             )}
             {!info && <span>Agent unreachable</span>}
+            <span className={grid.serverDot}>·</span>
+            <span>
+              Signed in as <strong>{session.email}</strong> ({roleDisplayLabel(session.role)})
+            </span>
           </div>
         </div>
       </div>
 
       <div className={grid.statRow}>
-        <Stat
-          label="Apps"
-          value={apps ? `${runningApps}/${apps.length}` : "-"}
-          sub={apps ? "running" : "unavailable"}
-        />
-        <Stat
-          label="Certs"
-          value={certs ? String(certs.length) : "-"}
-          sub={certSub}
-          tone={certTone}
-        />
+        {canApps && (
+          <Stat
+            label="Apps"
+            value={apps ? `${runningApps}/${apps.length}` : "-"}
+            sub={apps ? "running" : "unavailable"}
+          />
+        )}
+        {canDomains && (
+          <Stat
+            label="Certs"
+            value={certs ? String(certs.length) : "-"}
+            sub={certSub}
+            tone={certTone}
+          />
+        )}
         <Stat
           label="Load avg"
           value={info ? info.load_1.toFixed(2) : "-"}
@@ -129,6 +289,23 @@ export default async function DashboardPage() {
           tone={diskTone}
         />
       </div>
+
+      {hubItems.length > 0 && (
+        <div className={styles.section}>
+          <h2 className={styles.sectionTitle}>Control Hub</h2>
+          <div className={grid.hubGrid}>
+            {hubItems.map((item) => (
+              <Link key={item.href} href={item.href} className={grid.hubCard}>
+                <span className={grid.hubIcon}>{item.icon}</span>
+                <div>
+                  <div className={grid.hubTitle}>{item.label}</div>
+                  <div className={grid.hubSub}>{item.sub}</div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className={grid.chartRow}>
         <HealthChart label="Load 1m" fetchValue={fetchLoadOne} />
@@ -191,7 +368,7 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      {info && <FolderBreakdown />}
+      {info && canFolders && <FolderBreakdown />}
     </div>
   );
 }

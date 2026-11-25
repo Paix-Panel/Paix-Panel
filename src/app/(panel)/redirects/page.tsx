@@ -1,3 +1,6 @@
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
+import { requireSession } from "@/lib/auth";
+import { hasPermission, isDomainAllowed } from "@/lib/permissions";
 import { agent } from "@/lib/agent";
 import { listRedirects } from "@/lib/redirects";
 import Table from "@/components/Table/Table";
@@ -16,22 +19,27 @@ import local from "./redirects.module.css";
 export const dynamic = "force-dynamic";
 
 export default async function RedirectsPage() {
-  // Only vhosts the panel wrote can carry redirect rules: the Sites tab's
-  // `site-<domain>` files and app vhosts with the `# vps-app:` marker. The
-  // panel host and hand-written vhosts are left alone (the agent enforces
-  // this too). If the agent is down we still render the stored rules, just
-  // without the "vhost missing" hint since we can't tell.
+  const session = await requireSession();
+  if (!hasPermission(session, "domains")) {
+    return (
+      <AccessRestricted
+        title="Redirects access restricted"
+        message="You do not have permission to manage domain redirects."
+      />
+    );
+  }
+
   let agentReachable = true;
   const vhosts = await agent.sites.list().catch(() => {
     agentReachable = false;
     return [];
   });
   const domains = vhosts
-    .filter((v) => v.kind === "site" || v.kind === "app")
+    .filter((v) => (v.kind === "site" || v.kind === "app") && isDomainAllowed(session, v.domain))
     .map((v) => v.domain)
     .sort();
   const servable = new Set(domains);
-  const redirects = listRedirects();
+  const redirects = listRedirects().filter((r) => isDomainAllowed(session, r.domain));
 
   return (
     <div>

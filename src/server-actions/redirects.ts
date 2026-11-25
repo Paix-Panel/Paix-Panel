@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { AgentError } from "@/lib/agent";
 import { db } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
+import { isDomainAllowed } from "@/lib/permissions";
 import { writeAudit } from "@/lib/audit";
 import {
   agentErrorMessage,
@@ -65,9 +66,12 @@ export async function createRedirectAction(
   _prev: RedirectActionResult | null,
   fd: FormData,
 ): Promise<RedirectActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("domains");
   const domain = String(fd.get("domain") ?? "").trim().toLowerCase();
   if (!isSafeDomain(domain)) return { ok: false, error: "Pick a domain." };
+  if (!isDomainAllowed(s, domain)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   const f = parseFields(fd);
   if ("error" in f) return { ok: false, error: f.error };
 
@@ -111,9 +115,12 @@ export async function updateRedirectAction(
   _prev: RedirectActionResult | null,
   fd: FormData,
 ): Promise<RedirectActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("domains");
   const before = getRedirect(id);
   if (!before) return { ok: false, error: "This redirect no longer exists." };
+  if (!isDomainAllowed(s, before.domain)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   const f = parseFields(fd);
   if ("error" in f) return { ok: false, error: f.error };
 
@@ -151,11 +158,14 @@ export async function updateRedirectAction(
 // Returns the agent's refusal for the delete dialog: thrown, its message is
 // replaced by Next in a production build.
 export async function deleteRedirectAction(id: number): Promise<RedirectActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("domains");
   const row = getRedirect(id);
   if (!row) {
     revalidatePath("/redirects");
     return { ok: true };
+  }
+  if (!isDomainAllowed(s, row.domain)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
   }
   const target = `${row.domain}${row.source_path}`;
   db().prepare(`DELETE FROM redirects WHERE id = ?`).run(id);

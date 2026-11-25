@@ -1,23 +1,20 @@
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
 import { agent } from "@/lib/agent";
 import { requireSession } from "@/lib/auth";
+import { hasPermission } from "@/lib/permissions";
 import { getServerAddress } from "@/lib/serverAddress";
-import shared from "@/components/page.module.css";
 import ScaleClient from "./ScaleClient";
 
 export const dynamic = "force-dynamic";
 
 export default async function ScalePage() {
   const s = await requireSession();
-  if (s.role !== "admin") {
+  if (!hasPermission(s, "services")) {
     return (
-      <div className={shared.head}>
-        <div>
-          <h1 className={shared.title}>Performance, Scale &amp; Addons</h1>
-          <div className={shared.subtitle}>
-            Only admins can tune kernel/network settings and install infrastructure addons.
-          </div>
-        </div>
-      </div>
+      <AccessRestricted
+        title="Scale & Addons restricted"
+        message="You do not have permission to tune scaling settings or install infrastructure addons."
+      />
     );
   }
 

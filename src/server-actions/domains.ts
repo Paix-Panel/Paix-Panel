@@ -9,7 +9,8 @@ import {
   type ReconcileZoneResp,
   type UpdateRecord,
 } from "@/lib/agent";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
+import { isDomainAllowed } from "@/lib/permissions";
 import { writeAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { getServerAddress } from "@/lib/serverAddress";
@@ -23,7 +24,10 @@ export type ActionResult<T = undefined> =
 // thrown, the message is replaced by Next in a production build and the
 // operator gets the page's error screen instead of the agent's reason.
 export async function deleteZoneAction(zone: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("domains");
+  if (!isDomainAllowed(s, zone)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   try {
     await agent.dns.deleteZone(zone);
   } catch (e: unknown) {
@@ -46,9 +50,12 @@ export async function enableZoneAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("domains");
   const name = String(fd.get("zone") ?? "").trim().toLowerCase();
   if (!name) return { ok: false, error: "zone name required" };
+  if (!isDomainAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   try {
     const addr = await getServerAddress();
     const seedIp = addr.ip ?? undefined;
@@ -79,8 +86,11 @@ export async function enableZoneAction(
 }
 
 export async function adoptZoneAction(zone: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("domains");
   const name = zone.trim().toLowerCase();
+  if (!isDomainAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   const zones = await agent.dns.listZones().catch(() => []);
   const exists = zones.some((z) => z.name === name);
   if (!exists) {
@@ -112,7 +122,10 @@ export async function adoptZoneActionForm(
 export async function reconcileZoneAction(
   zone: string,
 ): Promise<ActionResult<ReconcileZoneResp>> {
-  const s = await requireAdmin();
+  const s = await requirePermission("domains");
+  if (!isDomainAllowed(s, zone)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   try {
     const result = await agent.dns.reconcileZone(zone);
     writeAudit({
@@ -138,8 +151,11 @@ export async function reconcileZoneAction(
 }
 
 export async function deleteDomainAction(zone: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("domains");
   const target = zone.trim().toLowerCase();
+  if (!isDomainAllowed(s, target)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
 
   // The cascade wipes every site vhost under the zone. One of them being an
   // app's routing slot means the app must be unassigned first, otherwise its
@@ -277,7 +293,10 @@ export async function deleteDomainAction(zone: string): Promise<ActionResult> {
 }
 
 export async function signZoneAction(zone: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("domains");
+  if (!isDomainAllowed(s, zone)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   try {
     await agent.dns.signZone(zone);
   } catch (e: unknown) {
@@ -296,7 +315,10 @@ export async function createRecordAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("domains");
+  if (!isDomainAllowed(s, zone)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   const body: CreateRecord = {
     name: String(fd.get("name") ?? "").trim(),
     type: String(fd.get("type") ?? "A").trim().toUpperCase(),
@@ -321,7 +343,10 @@ export async function updateRecordAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("domains");
+  if (!isDomainAllowed(s, zone)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   const rawPrio = fd.get("prio");
   const rawName = fd.get("name");
   const submittedType =
@@ -361,7 +386,10 @@ export async function updateRecordAction(
 }
 
 export async function deleteRecordAction(zone: string, id: number): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("domains");
+  if (!isDomainAllowed(s, zone)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   try {
     await agent.dns.deleteRecord(id);
   } catch (e: unknown) {

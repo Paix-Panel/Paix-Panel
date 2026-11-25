@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { agent, AgentError, type SiteMode } from "@/lib/agent";
-import { requireAdmin } from "@/lib/auth";
+import { hasPermission, requirePermission } from "@/lib/auth";
+import { isDomainAllowed } from "@/lib/permissions";
 import { writeAudit } from "@/lib/audit";
 import { config } from "@/lib/config";
 import { db } from "@/lib/db";
@@ -246,10 +247,16 @@ export async function createSiteAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("domains");
   const parsed = parseAndValidate(fd);
   if (!parsed.ok) return parsed.result;
   const { domain, route, forceWwwRedirect, issueSsl, createDnsZone, configureMail } = parsed;
+  if (!isDomainAllowed(s, domain)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
+  if (configureMail && !hasPermission(s, "mail")) {
+    return { ok: false, error: "Forbidden: mail permission required to configure mail." };
+  }
 
   // The panel's own hostname is served by the panel. A site with that name
   // would be loaded first by nginx and hide the panel.
@@ -312,10 +319,13 @@ export async function replaceSiteAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("domains");
   const parsed = parseAndValidate(fd);
   if (!parsed.ok) return parsed.result;
   const { domain, route, forceWwwRedirect, issueSsl } = parsed;
+  if (!isDomainAllowed(s, domain)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   if (route.mode === "dns_only") {
     return { ok: false, error: "cannot replace a site with a DNS-only entry" };
   }
@@ -366,10 +376,13 @@ export async function adoptSiteAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("domains");
   const parsed = parseAndValidate(fd);
   if (!parsed.ok) return parsed.result;
   const { domain, route, forceWwwRedirect, issueSsl } = parsed;
+  if (!isDomainAllowed(s, domain)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   if (route.mode === "dns_only") {
     return { ok: false, error: "cannot adopt a DNS-only entry" };
   }
@@ -451,7 +464,10 @@ export async function siteFormDispatchAction(
 // message is replaced by Next in a production build and the operator gets the
 // page's error screen instead of the agent's reason.
 export async function removeAgentOnlySiteAction(domain: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("domains");
+  if (!isDomainAllowed(s, domain)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   try {
     await agent.sites.delete(domain);
   } catch (e: unknown) {
@@ -476,7 +492,10 @@ export async function removeAgentOnlySiteAction(domain: string): Promise<ActionR
 }
 
 export async function deleteSiteAction(domain: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("domains");
+  if (!isDomainAllowed(s, domain)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   // Removing a bound slot would leave the app's unit listening for a vhost
   // that no longer exists. Unassign it on the app page first.
   const boundApp = boundAppFor(domain);
@@ -520,7 +539,10 @@ export async function updateSiteRouteAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("domains");
+  if (!isDomainAllowed(s, domain)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   const mode = String(fd.get("mode") ?? "port");
   const issueSsl = fd.get("issue_ssl") === "on";
   const forceWwwRedirect = fd.get("force_www_redirect") === "on";
@@ -613,7 +635,10 @@ export async function updateSiteRouteAction(
 }
 
 export async function renewSslAction(domain: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("domains");
+  if (!isDomainAllowed(s, domain)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   try {
     await agent.ssl.renew(domain);
     db()
@@ -647,7 +672,10 @@ export async function renewSslAction(domain: string): Promise<ActionResult> {
  * when the new cert lands, instead of the operator reloading blind.
  */
 export async function renewSslTaskAction(domain: string): Promise<SslTaskResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("domains");
+  if (!isDomainAllowed(s, domain)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   try {
     const resp = await agent.ssl.renew(domain);
     db()
@@ -675,7 +703,10 @@ export async function renewSslTaskAction(domain: string): Promise<SslTaskResult>
 }
 
 export async function retrySslAction(domain: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("domains");
+  if (!isDomainAllowed(s, domain)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   const conn = db();
   const row = conn
     .prepare(
@@ -741,7 +772,10 @@ export async function retrySslAction(domain: string): Promise<ActionResult> {
 // false on purpose so an apex install doesn't pre-claim the www. sibling — if
 // the operator wants www in the SAN list they use the full Add domain form.
 export async function installSslAction(domain: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("domains");
+  if (!isDomainAllowed(s, domain)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   if (!FQDN_RE.test(domain)) return { ok: false, error: "invalid domain" };
 
   const collision = checkAppSubdomainCollision(domain);

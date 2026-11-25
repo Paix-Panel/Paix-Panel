@@ -1,3 +1,6 @@
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
+import { requireSession } from "@/lib/auth";
+import { hasPermission } from "@/lib/permissions";
 import { agent } from "@/lib/agent";
 import Table from "@/components/Table/Table";
 import LocalTime from "@/components/LocalTime/LocalTime";
@@ -8,6 +11,16 @@ import BackupRunner from "./BackupRunner";
 export const dynamic = "force-dynamic";
 
 export default async function BackupsPage() {
+  const session = await requireSession();
+  if (!hasPermission(session, "backups")) {
+    return (
+      <AccessRestricted
+        title="Backups access restricted"
+        message="You do not have permission to view or run server backups."
+      />
+    );
+  }
+
   const snapshots = await agent.backups.list().catch(() => []);
   return (
     <div>

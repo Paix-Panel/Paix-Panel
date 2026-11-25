@@ -1,3 +1,6 @@
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
+import { requireSession } from "@/lib/auth";
+import { hasPermission, isAdminRole, isDatabaseAllowed } from "@/lib/permissions";
 import { agent } from "@/lib/agent";
 import Table from "@/components/Table/Table";
 import QuickInstallStrip from "@/components/QuickInstallStrip/QuickInstallStrip";
@@ -62,30 +65,39 @@ const DB_GUI_SLUGS = [
 ] as const;
 
 export default async function DatabasesPage() {
-  const [users, dbs, recipes, addr] = await Promise.all([
+  const session = await requireSession();
+  if (!hasPermission(session, "databases")) {
+    return (
+      <AccessRestricted
+        title="Databases access restricted"
+        message="You do not have permission to view or manage databases."
+      />
+    );
+  }
+
+  const isAdmin = isAdminRole(session.role);
+  const isDbScoped = !isAdmin && (session.permissions.scopes?.databases?.length ?? 0) > 0;
+
+  const [users, rawDbs, recipes, addr] = await Promise.all([
     agent.databases.listUsers().catch(() => []),
     agent.databases.listDatabases().catch(() => []),
     agent.quickInstall.list().catch(() => []),
     getServerAddress(),
   ]);
+  const dbs = rawDbs.filter((d) => isDatabaseAllowed(session, d.name));
   const serverAddress = addr.domain ?? addr.ip ?? null;
   const mariadb = recipes.find((r) => r.slug === "mariadb");
   const postgres = recipes.find((r) => r.slug === "postgresql");
   const pgadmin = recipes.find((r) => r.slug === "pgadmin");
-  const dbRecipes = recipes.filter(
-    (r) =>
-      (DB_GUI_SLUGS as readonly string[]).includes(r.slug) &&
-      // pgvector is a Postgres add-on — only surface its card once Postgres
-      // itself is installed; before that the install would just fail.
-      (r.slug !== "pgvector" || (postgres?.installed ?? false)),
-  );
+  const dbRecipes = isAdmin
+    ? recipes.filter(
+        (r) =>
+          (DB_GUI_SLUGS as readonly string[]).includes(r.slug) &&
+          (r.slug !== "pgvector" || (postgres?.installed ?? false)),
+      )
+    : [];
 
-  // Only fetch Postgres state when the engine is actually installed.
-  // Otherwise the agent's psql shell-out would 500 every page render and
-  // pollute the audit log with spurious errors. Both endpoints fall back
-  // to [] on failure so a transient psql hiccup degrades gracefully
-  // instead of breaking the whole page.
-  const [pgRoles, pgDbs, pgvector] = postgres?.installed
+  const [pgRoles, rawPgDbs, pgvector] = postgres?.installed
     ? await Promise.all([
         agent.postgres.listUsers().catch(() => []),
         agent.postgres.listDatabases().catch(() => []),
@@ -94,6 +106,7 @@ export default async function DatabasesPage() {
           .catch(() => ({ available: false, enabled: [] as string[] })),
       ])
     : [[], [], { available: false, enabled: [] as string[] }];
+  const pgDbs = rawPgDbs.filter((d) => isDatabaseAllowed(session, d.name));
 
   return (
     <div>
@@ -110,7 +123,7 @@ export default async function DatabasesPage() {
         </div>
       </div>
 
-      {dbRecipes.length > 0 && (
+      {isAdmin && dbRecipes.length > 0 && (
         <div style={{ marginTop: 12, marginBottom: 24 }}>
           <QuickInstallStrip
             recipes={dbRecipes}
@@ -219,46 +232,50 @@ export default async function DatabasesPage() {
         empty="No MariaDB databases yet."
       />
 
-      <div className={styles.section} style={{ marginTop: 18 }}>
-        <h2 className={styles.sectionTitle}>Create MariaDB user</h2>
-        <CreateUserForm action={createDbUserAction} />
-      </div>
+      {!isDbScoped && (
+        <>
+          <div className={styles.section} style={{ marginTop: 18 }}>
+            <h2 className={styles.sectionTitle}>Create MariaDB user</h2>
+            <CreateUserForm action={createDbUserAction} />
+          </div>
 
-      <Table
-        columns={[
-          { key: "user", label: "MariaDB user" },
-          { key: "host", label: "Host" },
-          { key: "actions", label: "", width: "200px" },
-        ]}
-        rowKey={(_row, i) => `${users[i].user}@${users[i].host}`}
-        rows={users.map((u) => ({
-          user: <span className={styles.code}>{u.user}</span>,
-          host: u.host,
-          actions: (
-            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <ChangePasswordButton
-                identity={`${u.user}@${u.host}`}
-                action={setDbUserPasswordAction.bind(null, u.user, u.host)}
-              />
-              <ConfirmDeleteButton
-                action={deleteDbUserAction.bind(null, u.user, u.host)}
-                buttonLabel="Drop"
-                confirmLabel="Drop user"
-                title={`Drop MariaDB user ${u.user}@${u.host}?`}
-                body={
-                  <p>
-                    This permanently removes the user{" "}
-                    <span className={styles.code}>{u.user}</span> and all its
-                    grants. Apps connecting as this user will stop
-                    authenticating. This cannot be undone.
-                  </p>
-                }
-              />
-            </div>
-          ),
-        }))}
-        empty="No MariaDB users yet."
-      />
+          <Table
+            columns={[
+              { key: "user", label: "MariaDB user" },
+              { key: "host", label: "Host" },
+              { key: "actions", label: "", width: "200px" },
+            ]}
+            rowKey={(_row, i) => `${users[i].user}@${users[i].host}`}
+            rows={users.map((u) => ({
+              user: <span className={styles.code}>{u.user}</span>,
+              host: u.host,
+              actions: (
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                  <ChangePasswordButton
+                    identity={`${u.user}@${u.host}`}
+                    action={setDbUserPasswordAction.bind(null, u.user, u.host)}
+                  />
+                  <ConfirmDeleteButton
+                    action={deleteDbUserAction.bind(null, u.user, u.host)}
+                    buttonLabel="Drop"
+                    confirmLabel="Drop user"
+                    title={`Drop MariaDB user ${u.user}@${u.host}?`}
+                    body={
+                      <p>
+                        This permanently removes the user{" "}
+                        <span className={styles.code}>{u.user}</span> and all its
+                        grants. Apps connecting as this user will stop
+                        authenticating. This cannot be undone.
+                      </p>
+                    }
+                  />
+                </div>
+              ),
+            }))}
+            empty="No MariaDB users yet."
+          />
+        </>
+      )}
 
       <div className={styles.section} style={{ marginTop: 18 }}>
         <h2 className={styles.sectionTitle}>Grant MariaDB privileges</h2>
@@ -342,52 +359,56 @@ export default async function DatabasesPage() {
             empty="No Postgres databases yet."
           />
 
-          <div className={styles.section} style={{ marginTop: 18 }}>
-            <h2 className={styles.sectionTitle}>Create Postgres role</h2>
-            <CreatePgUserForm action={createPgRoleAction} />
-          </div>
+          {!isDbScoped && (
+            <>
+              <div className={styles.section} style={{ marginTop: 18 }}>
+                <h2 className={styles.sectionTitle}>Create Postgres role</h2>
+                <CreatePgUserForm action={createPgRoleAction} />
+              </div>
 
-          <Table
-            scrollX
-            columns={[
-              { key: "user", label: "Postgres role" },
-              { key: "flags", label: "Flags" },
-              { key: "actions", label: "", width: "200px" },
-            ]}
-            rowKey={(_row, i) => pgRoles[i].user}
-            rows={pgRoles.map((r) => ({
-              user: <span className={styles.code}>{r.user}</span>,
-              flags: r.superuser ? (
-                <StatusBadge text="superuser" tone="warn" />
-              ) : (
-                <span className={styles.muted}>—</span>
-              ),
-              actions: (
-                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                  <ChangePasswordButton
-                    identity={r.user}
-                    action={setPgRolePasswordAction.bind(null, r.user)}
-                  />
-                  <ConfirmDeleteButton
-                    action={deletePgRoleAction.bind(null, r.user)}
-                    buttonLabel="Drop"
-                    confirmLabel="Drop role"
-                    title={`Drop Postgres role ${r.user}?`}
-                    body={
-                      <p>
-                        This removes the role{" "}
-                        <span className={styles.code}>{r.user}</span>. Objects it
-                        owns are reassigned to{" "}
-                        <span className={styles.code}>postgres</span> first so the
-                        drop can proceed. This cannot be undone.
-                      </p>
-                    }
-                  />
-                </div>
-              ),
-            }))}
-            empty="No Postgres roles yet."
-          />
+              <Table
+                scrollX
+                columns={[
+                  { key: "user", label: "Postgres role" },
+                  { key: "flags", label: "Flags" },
+                  { key: "actions", label: "", width: "200px" },
+                ]}
+                rowKey={(_row, i) => pgRoles[i].user}
+                rows={pgRoles.map((r) => ({
+                  user: <span className={styles.code}>{r.user}</span>,
+                  flags: r.superuser ? (
+                    <StatusBadge text="superuser" tone="warn" />
+                  ) : (
+                    <span className={styles.muted}>—</span>
+                  ),
+                  actions: (
+                    <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                      <ChangePasswordButton
+                        identity={r.user}
+                        action={setPgRolePasswordAction.bind(null, r.user)}
+                      />
+                      <ConfirmDeleteButton
+                        action={deletePgRoleAction.bind(null, r.user)}
+                        buttonLabel="Drop"
+                        confirmLabel="Drop role"
+                        title={`Drop Postgres role ${r.user}?`}
+                        body={
+                          <p>
+                            This removes the role{" "}
+                            <span className={styles.code}>{r.user}</span>. Objects it
+                            owns are reassigned to{" "}
+                            <span className={styles.code}>postgres</span> first so the
+                            drop can proceed. This cannot be undone.
+                          </p>
+                        }
+                      />
+                    </div>
+                  ),
+                }))}
+                empty="No Postgres roles yet."
+              />
+            </>
+          )}
 
           <div className={styles.section} style={{ marginTop: 18 }}>
             <h2 className={styles.sectionTitle}>Grant Postgres privileges</h2>
@@ -407,7 +428,7 @@ export default async function DatabasesPage() {
         </div>
       )}
 
-      {pgadmin?.installed && (
+      {isAdmin && pgadmin?.installed && (
         // The quick-install recipe gives the dpage/pgadmin4 container its
         // first login (PGADMIN_DEFAULT_EMAIL / PGADMIN_DEFAULT_PASSWORD env
         // vars in agent/src/handlers/quick_install.rs::PGADMIN). The

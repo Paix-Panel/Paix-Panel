@@ -40,10 +40,14 @@ export async function POST(req: NextRequest) {
 
   const user = db()
     .prepare(
-      `SELECT email, role, totp_enabled FROM users WHERE id = ?`,
+      `SELECT email, role, totp_enabled, is_active FROM users WHERE id = ?`,
     )
-    .get(userId) as { email: string; role: string; totp_enabled: number } | undefined;
-  if (!user) return new NextResponse("user gone", { status: 401 });
+    .get(userId) as
+    | { email: string; role: string; totp_enabled: number; is_active: number }
+    | undefined;
+  if (!user || !user.is_active) {
+    return new NextResponse("user unavailable", { status: 401 });
+  }
 
   // A session that still owes its TOTP code never turns into a full one
   // here. If two-factor was switched off meanwhile (the agent's password

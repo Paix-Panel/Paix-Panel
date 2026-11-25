@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { agent, AgentError, type FailedByIp } from "@/lib/agent";
-import { requireAdmin, requireSession } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 import { agentErrorMessage } from "@/lib/redirects";
 
@@ -19,7 +19,7 @@ export async function firewallPortAction(
   _prev: PortActionResult | null,
   fd: FormData,
 ): Promise<PortActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("security");
   const intent = String(fd.get("intent") ?? "");
   const port = Number(fd.get("port"));
   const proto = String(fd.get("proto") ?? "tcp");
@@ -72,7 +72,7 @@ function failed(
 }
 
 export async function unbanIpAction(jail: string, ip: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("security");
   try {
     await agent.firewall.unban(jail, ip);
   } catch (e: unknown) {
@@ -84,7 +84,7 @@ export async function unbanIpAction(jail: string, ip: string): Promise<ActionRes
 }
 
 export async function unbanAllAction(jail: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("security");
   try {
     await agent.firewall.unbanAll(jail);
   } catch (e: unknown) {
@@ -105,7 +105,7 @@ export async function unbanAllAction(jail: string): Promise<ActionResult> {
 export async function fetchFailedByIpAction(
   jail: string,
 ): Promise<{ ok: true; rows: FailedByIp[] } | { ok: false; error: string }> {
-  await requireSession();
+  await requirePermission("security");
   try {
     return { ok: true, rows: await agent.firewall.failedByIp(jail) };
   } catch (e: unknown) {
@@ -114,7 +114,7 @@ export async function fetchFailedByIpAction(
 }
 
 export async function enableUfwAction(): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("security");
   try {
     await agent.firewall.enable();
   } catch (e: unknown) {
@@ -126,7 +126,7 @@ export async function enableUfwAction(): Promise<ActionResult> {
 }
 
 export async function restartFail2banAction(): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("security");
   try {
     await agent.services.action("fail2ban", "restart");
   } catch (e: unknown) {
@@ -151,7 +151,7 @@ export async function restartFail2banAction(): Promise<ActionResult> {
 // Stopping pairs with disable so the next reboot doesn't silently bring
 // fail2ban back; starting pairs with enable so it survives a reboot.
 export async function toggleFail2banAction(currentlyActive: boolean): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("security");
   const target = currentlyActive ? "off" : "on";
   try {
     if (currentlyActive) {

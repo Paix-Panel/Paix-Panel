@@ -1,3 +1,6 @@
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
+import { requireSession } from "@/lib/auth";
+import { hasPermission } from "@/lib/permissions";
 import { agent, type KeyRow, type SystemUserRow } from "@/lib/agent";
 import Table from "@/components/Table/Table";
 import StatusBadge from "@/components/StatusBadge/StatusBadge";
@@ -24,9 +27,6 @@ export const dynamic = "force-dynamic";
 
 type UserKeys = { user: SystemUserRow; keys: KeyRow[] };
 
-// Always give the operator at least root if the agent's /system/users probe
-// fails (socket down, /etc/passwd unreadable) so the page still renders a
-// usable surface instead of an empty one.
 const ROOT_FALLBACK: SystemUserRow = {
   name: "root",
   uid: 0,
@@ -38,9 +38,16 @@ const ROOT_FALLBACK: SystemUserRow = {
 };
 
 export default async function SshKeysPage() {
-  // Every Linux account the agent surfaces (root + UID >= 33, minus the
-  // service blocklist), so a key can be assigned to any of them — not just
-  // the old hardcoded apps/root pair.
+  const session = await requireSession();
+  if (!hasPermission(session, "security")) {
+    return (
+      <AccessRestricted
+        title="SSH keys access restricted"
+        message="You do not have permission to view or manage server SSH keys."
+      />
+    );
+  }
+
   const users = await agent.system
     .users()
     .then((list) => (list.length > 0 ? list : [ROOT_FALLBACK]))

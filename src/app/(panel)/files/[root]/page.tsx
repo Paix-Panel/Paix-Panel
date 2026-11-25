@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
 import { agent } from "@/lib/agent";
 import { requireSession } from "@/lib/auth";
+import { hasPermission } from "@/lib/permissions";
 import { uploadLimitMb } from "@/lib/uploadLimit";
 import { agentErrorMessage } from "@/lib/redirects";
 import styles from "@/components/page.module.css";
@@ -9,16 +11,6 @@ import FileBrowser from "./FileBrowser";
 
 export const dynamic = "force-dynamic";
 
-/**
- * One jailed root, browsed at `?path=<relative>`.
- *
- * The path lives in the query string rather than a catch-all segment so real
- * filenames — spaces, `#`, `%`, non-ASCII — survive a round trip without
- * fighting segment encoding.
- *
- * Note `/files/trash` is a sibling static route and wins over this dynamic
- * one; no root is named `trash`, so nothing is shadowed.
- */
 export default async function FilesRootPage({
   params,
   searchParams,
@@ -26,16 +18,13 @@ export default async function FilesRootPage({
   params: Promise<{ root: string }>;
   searchParams: Promise<{ path?: string }>;
 }) {
-  // Listings are read as root: admins only, like download and upload.
   const s = await requireSession();
-  if (s.role !== "admin") {
+  if (!hasPermission(s, "files")) {
     return (
-      <div className={styles.head}>
-        <div>
-          <h1 className={styles.title}>Files</h1>
-          <div className={styles.subtitle}>Only admins can browse the server&apos;s files.</div>
-        </div>
-      </div>
+      <AccessRestricted
+        title="Files access restricted"
+        message="You do not have permission to browse or edit server files."
+      />
     );
   }
   const { root: rootId } = await params;

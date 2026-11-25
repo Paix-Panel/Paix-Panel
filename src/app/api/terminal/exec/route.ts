@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import http from "node:http";
 import { relayBody } from "@/lib/agent";
 import { config } from "@/lib/config";
-import { getSession } from "@/lib/auth";
+import { getSession, hasPermission } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
   if (!session || session.needsTotp) {
     return new Response("unauthorized", { status: 401 });
   }
-  if (session.role !== "admin") {
+  if (!hasPermission(session, "terminal")) {
     return new Response("forbidden", { status: 403 });
   }
 

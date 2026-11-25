@@ -1,4 +1,7 @@
 import Link from "next/link";
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
+import { requireSession } from "@/lib/auth";
+import { hasPermission, isDomainAllowed } from "@/lib/permissions";
 import { agent, type SiteStatus } from "@/lib/agent";
 import { db } from "@/lib/db";
 import Table from "@/components/Table/Table";
@@ -56,6 +59,17 @@ export default async function DomainDetailPage({
   params: Promise<{ domain: string }>;
 }) {
   const { domain } = await params;
+  const session = await requireSession();
+  if (!hasPermission(session, "domains") || !isDomainAllowed(session, domain)) {
+    return (
+      <AccessRestricted
+        title="Domain access restricted"
+        message={`You do not have permission to view or manage "${domain}".`}
+        backHref="/domains"
+        backLabel="Back to domains"
+      />
+    );
+  }
 
   const site = db()
     .prepare(

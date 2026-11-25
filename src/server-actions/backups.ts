@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { agent } from "@/lib/agent";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 import { agentErrorMessage } from "@/lib/redirects";
 
@@ -11,7 +11,7 @@ export type RunBackupResult = { ok: true; taskId: string } | { ok: false; error:
 /** Returns the refusal (e.g. a backup already running) instead of throwing it
  *  into the page's error screen. */
 export async function runBackupAction(): Promise<RunBackupResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("backups");
   try {
     const resp = await agent.backups.run();
     writeAudit({ actorId: s.userId, action: "backups.run", result: "ok" });
@@ -25,7 +25,7 @@ export async function runBackupAction(): Promise<RunBackupResult> {
 
 /** Like runBackupAction, returns the refusal instead of throwing it. */
 export async function restoreBackupAction(snapshot: string, target: string): Promise<RunBackupResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("backups");
   try {
     const resp = await agent.backups.restore(snapshot, target);
     writeAudit({ actorId: s.userId, action: "backups.restore", target: `${snapshot}->${target}`, result: "ok" });

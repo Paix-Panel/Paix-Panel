@@ -1,31 +1,21 @@
 import Link from "next/link";
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
 import { agent } from "@/lib/agent";
 import { requireSession } from "@/lib/auth";
+import { hasPermission } from "@/lib/permissions";
 import styles from "@/components/page.module.css";
 import fileStyles from "./files.module.css";
 
 export const dynamic = "force-dynamic";
 
-/**
- * The roots screen — deliberately NOT a listing of `/`.
- *
- * The agent runs as root, so a file manager that opens at the filesystem root
- * is a root file manager one mis-drop away from an unbootable box. Instead we
- * land on the handful of directories the panel actually owns, each of which is
- * a jail the agent enforces. `/` is still reachable, as the last card, marked
- * for what it is.
- */
 export default async function FilesPage() {
-  // Listings are read as root: admins only, like download and upload.
   const s = await requireSession();
-  if (s.role !== "admin") {
+  if (!hasPermission(s, "files")) {
     return (
-      <div className={styles.head}>
-        <div>
-          <h1 className={styles.title}>Files</h1>
-          <div className={styles.subtitle}>Only admins can browse the server&apos;s files.</div>
-        </div>
-      </div>
+      <AccessRestricted
+        title="Files access restricted"
+        message="You do not have permission to browse or edit server files."
+      />
     );
   }
   const roots = await agent.files.roots().catch(() => []);

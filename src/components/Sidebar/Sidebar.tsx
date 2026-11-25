@@ -5,95 +5,120 @@ import Link, { useLinkStatus } from "next/link";
 import { usePathname } from "next/navigation";
 import BoltMark from "@/components/BoltMark/BoltMark";
 import NavIcon, { type NavIconName } from "./NavIcon";
+import {
+  hasPermission,
+  isAdminRole,
+  type PermissionKey,
+  type UserPermissions,
+  type UserRole,
+} from "@/lib/permissions";
 import styles from "./Sidebar.module.css";
 
-type NavItem = { href: string; label: string; icon: NavIconName };
+type NavItem = {
+  href: string;
+  label: string;
+  icon: NavIconName;
+  /** Required module permission. If omitted, checked via `adminOnly` or always visible. */
+  perm?: PermissionKey;
+  /** Strictly requires admin or super_admin role. */
+  adminOnly?: boolean;
+};
 
 const SECTIONS: { group: string; items: NavItem[] }[] = [
   {
     group: "Overview",
-    items: [
-      { href: "/dashboard", label: "Dashboard", icon: "dashboard" },
-    ],
+    items: [{ href: "/dashboard", label: "Dashboard", icon: "dashboard" }],
   },
   {
     group: "Workloads",
     items: [
-      { href: "/apps", label: "Apps", icon: "apps" },
-      { href: "/scale", label: "Scale & Addons", icon: "scale" },
-      { href: "/cron", label: "Cron jobs", icon: "cron" },
-      { href: "/services", label: "System services", icon: "services" },
+      { href: "/apps", label: "Apps", icon: "apps", perm: "apps" },
+      { href: "/scale", label: "Scale & Addons", icon: "scale", perm: "services" },
+      { href: "/cron", label: "Cron jobs", icon: "cron", perm: "cron" },
+      { href: "/services", label: "System services", icon: "services", perm: "services" },
     ],
   },
   {
-    // Drive deep-links into the Files browser's `drive` root. Same machinery,
-    // separate entry: "my files" and "the server's guts" are different jobs
-    // and shouldn't share a starting point.
     group: "Storage",
     items: [
-      { href: "/files/drive", label: "Drive", icon: "drive" },
-      { href: "/files", label: "Files", icon: "files" },
+      { href: "/files/drive", label: "Drive", icon: "drive", perm: "files" },
+      { href: "/files", label: "Files", icon: "files", perm: "files" },
     ],
   },
   {
     group: "Networking",
     items: [
-      { href: "/domains", label: "Domains", icon: "domains" },
-      { href: "/redirects", label: "Redirects", icon: "redirects" },
-      { href: "/networks", label: "My Networks", icon: "networks" },
+      { href: "/domains", label: "Domains", icon: "domains", perm: "domains" },
+      { href: "/redirects", label: "Redirects", icon: "redirects", perm: "domains" },
+      { href: "/networks", label: "My Networks", icon: "networks", perm: "services" },
     ],
   },
   {
     group: "Mail & data",
     items: [
-      { href: "/mailboxes", label: "Mailboxes", icon: "mailboxes" },
-      { href: "/mailboxes/webmail", label: "Webmail", icon: "webmail" },
-      { href: "/databases", label: "Databases", icon: "databases" },
-      { href: "/backups", label: "Backups", icon: "backups" },
+      { href: "/mailboxes", label: "Mailboxes", icon: "mailboxes", perm: "mail" },
+      { href: "/mailboxes/webmail", label: "Webmail", icon: "webmail", perm: "mail" },
+      { href: "/databases", label: "Databases", icon: "databases", perm: "databases" },
+      { href: "/backups", label: "Backups", icon: "backups", perm: "backups" },
     ],
   },
   {
     group: "Operations",
     items: [
-      { href: "/terminal", label: "Terminal", icon: "terminal" },
-      { href: "/logs", label: "Logs", icon: "logs" },
-      { href: "/tasks", label: "Tasks", icon: "tasks" },
-      { href: "/audit", label: "Audit log", icon: "audit" },
-      { href: "/firewall", label: "Firewall & bans", icon: "firewall" },
-      { href: "/security", label: "Security & SSH", icon: "security" },
+      { href: "/terminal", label: "Terminal", icon: "terminal", perm: "terminal" },
+      { href: "/logs", label: "Logs", icon: "logs", perm: "logs" },
+      { href: "/tasks", label: "Tasks", icon: "tasks", perm: "logs" },
+      { href: "/audit", label: "Audit log", icon: "audit", perm: "logs" },
+      { href: "/firewall", label: "Firewall & bans", icon: "firewall", perm: "security" },
+      { href: "/security", label: "Security & SSH", icon: "security", perm: "security" },
     ],
   },
   {
     group: "Account",
     items: [
-      { href: "/users", label: "Users", icon: "users" },
-      { href: "/ssh-keys", label: "SSH keys", icon: "sshKeys" },
-      { href: "/notifications", label: "Notifications", icon: "notifications" },
+      { href: "/users", label: "Users", icon: "users", adminOnly: true },
+      { href: "/ssh-keys", label: "SSH keys", icon: "sshKeys", perm: "security" },
+      { href: "/notifications", label: "Notifications", icon: "notifications", perm: "services" },
       { href: "/settings", label: "Settings", icon: "settings" },
-      { href: "/ai-agent", label: "MCP", icon: "mcp" },
+      { href: "/ai-agent", label: "MCP", icon: "mcp", adminOnly: true },
     ],
   },
 ];
 
 export const SIDEBAR_TOGGLE_EVENT = "vps-panel:toggle-sidebar";
 
-export default function Sidebar() {
+type Props = {
+  role: UserRole;
+  permissions: UserPermissions;
+};
+
+export default function Sidebar({ role, permissions }: Props) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
-  // Longest match wins. A plain per-item prefix test would light up BOTH
-  // "Drive" (/files/drive) and "Files" (/files) while browsing the drive,
-  // since /files/drive is prefixed by /files.
+  const visibleSections = useMemo(() => {
+    const view = { role, permissions };
+    return SECTIONS.map((section) => ({
+      group: section.group,
+      items: section.items.filter((item) => {
+        if (item.adminOnly) return isAdminRole(role);
+        if (item.perm) return hasPermission(view, item.perm);
+        return true;
+      }),
+    })).filter((s) => s.items.length > 0);
+  }, [role, permissions]);
+
+  // Longest match wins.
   const activeHref = useMemo(() => {
     let best = "";
-    for (const section of SECTIONS) {
+    for (const section of visibleSections) {
       for (const item of section.items) {
         const matches = pathname === item.href || pathname.startsWith(item.href + "/");
         if (matches && item.href.length > best.length) best = item.href;
       }
     }
     return best;
-  }, [pathname]);
+  }, [pathname, visibleSections]);
 
   useEffect(() => {
     setOpen(false);
@@ -142,7 +167,7 @@ export default function Sidebar() {
             </svg>
           </button>
         </div>
-        {SECTIONS.map((section) => (
+        {visibleSections.map((section) => (
           <div key={section.group} className={styles.group}>
             <div className={styles.groupTitle}>{section.group}</div>
             <ul className={styles.list}>

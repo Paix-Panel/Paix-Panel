@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import http from "node:http";
 import { Readable, Transform, pipeline } from "node:stream";
 import { config } from "@/lib/config";
-import { getSession } from "@/lib/auth";
+import { getSession, hasPermission } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 import { originRefusal } from "@/lib/csrf";
 import { uploadLimitMb } from "@/lib/uploadLimit";
@@ -14,33 +14,6 @@ type Relayed = { code: number; body: string };
 
 /**
  * Streams an upload through to the agent.
- *
- * The request body is the file's raw bytes — the client sends the File object
- * directly, no multipart wrapper. That keeps the bytes flowing browser →
- * panel → agent → disk without any hop calling `formData()` and buffering a
- * multi-GB file in memory. The filename rides in the query string.
- *
- * src/proxy.ts does not match this route (it would keep only the first 10 MB
- * of the body), so the Origin check is made here.
- *
- * The size limit is the operator's (Settings > Panel > Uploads, lib/uploadLimit)
- * and is enforced here: up front from Content-Length, and by counting the
- * bytes as they pass. An upload stopped midway reaches the agent as a broken
- * stream, which it discards instead of saving what arrived. Free-space checks
- * and the temp-file-then-rename dance are the agent's job (`files::upload`).
- *
- * The agent refuses an upload it will not take (the name exists, the disk is
- * nearly full, a protected folder) before it reads any of the body. The body
- * is therefore announced with `Expect: 100-continue` and sent only once the
- * agent asks for it. Sent straight away, the bytes written after such an
- * answer failed with EPIPE, and that error could win the race against the
- * answer: the operator read "upload stream failed: write EPIPE" in place of
- * the reason.
- *
- * Once the body is on its way the agent can still stop (the disk fills up,
- * the agent restarts). Its answer is shown when one arrives. When the
- * connection just breaks, the operator gets a sentence that says so and
- * names the likely causes.
  */
 export async function POST(req: NextRequest) {
   const refused = originRefusal(req.headers);
@@ -50,13 +23,14 @@ export async function POST(req: NextRequest) {
   if (!session || session.needsTotp) {
     return new Response("unauthorized", { status: 401 });
   }
-  if (session.role !== "admin") {
-    return new Response("forbidden", { status: 403 });
-  }
 
   const sp = req.nextUrl.searchParams;
   const root = sp.get("root");
   const name = sp.get("name");
+  const isSqlDumpUpload = root === "drive" && (sp.get("path") ?? "") === "sql-dumps";
+  if (!hasPermission(session, "files") && !(isSqlDumpUpload && hasPermission(session, "databases"))) {
+    return new Response("forbidden", { status: 403 });
+  }
   if (!root || !name) {
     return new Response("root and name are required", { status: 400 });
   }

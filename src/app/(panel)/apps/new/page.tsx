@@ -1,4 +1,8 @@
 import Link from "next/link";
+import { ArrowLeft, Container, FolderCode, GitBranch } from "lucide-react";
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
+import { requireSession } from "@/lib/auth";
+import { hasPermission, isAdminRole, isDomainAllowed } from "@/lib/permissions";
 import DeployForm from "./DeployForm";
 import DockerForm from "./DockerForm";
 import {
@@ -21,31 +25,97 @@ type PortSiteRow = {
   upstream_port: number;
 };
 
+function ModeSwitcher({
+  active,
+  runtime,
+}: {
+  active: "github" | "manual" | "docker";
+  runtime?: string;
+}) {
+  const runtimeQuery = runtime ? `&runtime=${encodeURIComponent(runtime)}` : "";
+  const tabs: {
+    key: "github" | "manual" | "docker";
+    label: string;
+    href: string;
+    icon: React.ReactNode;
+  }[] = [
+    {
+      key: "github",
+      label: "GitHub / Git Repo",
+      href: `/apps/new?method=github${runtimeQuery}`,
+      icon: <GitBranch size={14} />,
+    },
+    {
+      key: "manual",
+      label: "Manual Folder",
+      href: `/apps/new?method=manual${runtimeQuery}`,
+      icon: <FolderCode size={14} />,
+    },
+    {
+      key: "docker",
+      label: "Docker Container",
+      href: "/apps/new?method=docker",
+      icon: <Container size={14} />,
+    },
+  ];
+
+  return (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+      {tabs.map((t) => {
+        const isActive = active === t.key;
+        return (
+          <Link
+            key={t.key}
+            href={t.href}
+            className={isActive ? styles.btn : styles.btnGhost}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              textDecoration: "none",
+            }}
+          >
+            {t.icon}
+            {t.label}
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
 export default async function NewAppPage({
   searchParams,
 }: {
-  searchParams: Promise<{ method?: string }>;
+  searchParams: Promise<{ method?: string; runtime?: string }>;
 }) {
+  const session = await requireSession();
+  if (!hasPermission(session, "apps")) {
+    return (
+      <AccessRestricted
+        title="App deployment restricted"
+        message="You do not have permission to deploy applications. Ask an administrator to grant Apps & Deployments access."
+      />
+    );
+  }
+
   const sp = await searchParams;
-  // method=github → ask for a repo URL; the agent will git-clone + npm
-  // install into source_dir before starting the unit. No method param =
-  // legacy flow (operator already put code into source_dir manually).
   const sourceMethod = sp.method === "github" ? "github" : "manual";
   const isDocker = sp.method === "docker";
+  const activeMode: "github" | "manual" | "docker" = isDocker
+    ? "docker"
+    : sourceMethod;
 
-  // Unowned slots only: one bound to another app or a quick-install service
-  // is never offered to a new app (the agent would 409 on the port anyway).
-  const portSites: PortSiteRow[] = freeSlotsFor("").map((s) => ({
-    domain: s.domain,
-    upstream_port: s.port,
-  }));
+  const hasDomainScope =
+    !isAdminRole(session.role) &&
+    (session.permissions.scopes?.domains?.length ?? 0) > 0;
+  const portSites: PortSiteRow[] = freeSlotsFor("")
+    .filter((s) => !hasDomainScope || isDomainAllowed(session, s.domain))
+    .map((s) => ({
+      domain: s.domain,
+      upstream_port: s.port,
+    }));
 
-  // For the GitHub-source flow, surface the aliases the operator can use as
-  // hostnames in `git@<alias>:owner/repo.git` URLs. The agent runs git as
-  // root, so only root's ~/.ssh/<name> keypairs are usable. Filter to
-  // keypair_name-bearing login-key rows — the panel-generated keypairs,
-  // which have a Host block in ~/.ssh/config and a private key on disk. A
-  // keypair put in ~/.ssh by hand (authorized: false) may have no Host block.
   const rootKeypairs =
     sourceMethod === "github" || isDocker
       ? await agent.ssh
@@ -66,15 +136,7 @@ export default async function NewAppPage({
     return (
       <div>
         <Link href="/apps" className={styles.backArrow} aria-label="Back to apps">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path
-              d="M10 3L5 8l5 5"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+          <ArrowLeft size={16} />
         </Link>
         <div className={styles.head}>
           <div>
@@ -87,6 +149,7 @@ export default async function NewAppPage({
             </div>
           </div>
         </div>
+        <ModeSwitcher active="docker" runtime={sp.runtime} />
         <div className={styles.section}>
           <DockerForm
             mode="new"
@@ -106,15 +169,7 @@ export default async function NewAppPage({
   return (
     <div>
       <Link href="/apps" className={styles.backArrow} aria-label="Back to apps">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path
-            d="M10 3L5 8l5 5"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+        <ArrowLeft size={16} />
       </Link>
       <div className={styles.head}>
         <div>
@@ -136,6 +191,7 @@ export default async function NewAppPage({
           </div>
         </div>
       </div>
+      <ModeSwitcher active={activeMode} runtime={sp.runtime} />
       <div className={styles.section}>
         <DeployForm
           action={deployAppAction}
@@ -143,6 +199,7 @@ export default async function NewAppPage({
           portSites={portSites}
           sourceMethod={sourceMethod}
           rootKeypairs={rootKeypairs}
+          initialRuntime={sp.runtime}
         />
       </div>
     </div>

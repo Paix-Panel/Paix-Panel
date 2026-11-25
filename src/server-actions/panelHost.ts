@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { agent } from "@/lib/agent";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
 
@@ -42,7 +42,7 @@ export async function setPanelHostAction(
   value: string,
   opts: SetPanelHostOptions = {},
 ): Promise<StartResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("settings");
   const trimmed = value.trim().toLowerCase();
   const err = validateHost(trimmed);
   if (err) {
@@ -93,7 +93,7 @@ export async function setPanelHostAction(
 export async function completePanelHostSetupAction(
   host: string,
 ): Promise<CompleteResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("settings");
   const trimmed = host.trim().toLowerCase();
   if (trimmed === "") {
     return { ok: true };

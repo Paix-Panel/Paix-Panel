@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 import http from "node:http";
 import { config } from "@/lib/config";
-import { getSession } from "@/lib/auth";
+import { getSession, isAdminRole } from "@/lib/auth";
+import { hasAnyPermission } from "@/lib/permissions";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -13,9 +14,12 @@ export async function GET(
   const session = await getSession();
   if (!session || session.needsTotp)
     return new Response("unauthorized", { status: 401 });
-  // Logs can carry mailbox usernames, client IPs, env values and build
-  // secrets: admins only, like everything else that exposes the server.
-  if (session.role !== "admin") return new Response("admins only", { status: 403 });
+  if (
+    !isAdminRole(session.role) &&
+    !hasAnyPermission(session, ["logs", "apps", "domains", "databases", "backups", "mail", "services", "security"])
+  ) {
+    return new Response("forbidden", { status: 403 });
+  }
   const { id } = await params;
   if (!/^[a-zA-Z0-9-]{1,64}$/.test(id)) {
     return new Response("invalid id", { status: 400 });

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { agent } from "@/lib/agent";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 import { agentErrorMessage } from "@/lib/redirects";
 
@@ -12,7 +12,7 @@ export async function createCronAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("cron");
   const schedule = String(fd.get("schedule") ?? "").trim();
   const user = String(fd.get("user") ?? "root").trim();
   const command = String(fd.get("command") ?? "").trim();
@@ -31,7 +31,7 @@ export async function createCronAction(
 // Returns the agent's refusal: thrown, its message is replaced by Next in a
 // production build and the operator gets the page's error screen.
 export async function deleteCronAction(id: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("cron");
   try {
     await agent.cron.delete(id);
   } catch (e: unknown) {

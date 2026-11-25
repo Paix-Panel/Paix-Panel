@@ -1,4 +1,7 @@
 import Link from "next/link";
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
+import { requireSession } from "@/lib/auth";
+import { hasPermission } from "@/lib/permissions";
 import { resolvePanelTimezone } from "@/lib/audit";
 import {
   listTaskDays,
@@ -33,6 +36,16 @@ export default async function TasksPage({
 }: {
   searchParams: Promise<{ day?: string }>;
 }) {
+  const session = await requireSession();
+  if (!hasPermission(session, "logs")) {
+    return (
+      <AccessRestricted
+        title="Tasks access restricted"
+        message="You do not have permission to view background task logs."
+      />
+    );
+  }
+
   const sp = await searchParams;
   const tz = await resolvePanelTimezone();
   const today = todayForTasks(tz);

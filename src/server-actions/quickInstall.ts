@@ -7,9 +7,28 @@ import {
   type PhpMyAdminSettings,
   type RoundcubeSettings,
 } from "@/lib/agent";
-import { requireAdmin, requireSession } from "@/lib/auth";
+import {
+  hasPermission,
+  isAdminRole,
+  requireAdmin,
+  requirePermission,
+  requireSession,
+} from "@/lib/auth";
+import { hasAnyPermission } from "@/lib/permissions";
 import { writeAudit } from "@/lib/audit";
 import { getSetting, setSetting } from "@/lib/settings";
+
+const DB_QUICK_SLUGS = new Set([
+  "mariadb",
+  "mysql",
+  "postgres",
+  "postgresql",
+  "phpmyadmin",
+  "adminer",
+  "redis",
+  "mongodb",
+]);
+const MAIL_QUICK_SLUGS = new Set(["roundcube"]);
 
 export type QuickInstallResult =
   | { ok: true; data: { taskId: string; slug: string } }
@@ -63,7 +82,7 @@ const N8N_AUTO_CHECK_KEY = "quickinstall.n8n.auto_check_updates";
  *  who had opted out of page-load checks must stay opted out - not get the
  *  6s-cap registry call silently re-enabled by a deploy. */
 export async function getN8nAutoCheck(): Promise<boolean> {
-  await requireSession();
+  await requirePermission("apps");
   const own = getSetting(N8N_AUTO_CHECK_KEY, "");
   if (own === "") {
     return getSetting("apps.auto_check_updates", "true") !== "false";
@@ -88,10 +107,18 @@ export async function quickInstallAction(
   _prev: QuickInstallResult | null,
   fd: FormData,
 ): Promise<QuickInstallResult> {
-  const s = await requireAdmin();
+  const s = await requireSession();
   const slug = String(fd.get("slug") ?? "").trim();
   if (!slug) {
     return { ok: false, error: "missing slug" };
+  }
+  const allowed =
+    isAdminRole(s.role) ||
+    hasPermission(s, "apps") ||
+    (DB_QUICK_SLUGS.has(slug) && hasPermission(s, "databases")) ||
+    (MAIL_QUICK_SLUGS.has(slug) && hasPermission(s, "mail"));
+  if (!allowed) {
+    return { ok: false, error: "Forbidden: missing permission to install this recipe." };
   }
   try {
     const accepted = await agent.quickInstall.run(slug);
@@ -124,7 +151,10 @@ export async function quickInstallAction(
  * throwing.
  */
 export async function getRoundcubeSettingsAction(): Promise<GetRoundcubeSettingsResult> {
-  await requireSession();
+  const s = await requireSession();
+  if (!hasAnyPermission(s, ["apps", "mail"])) {
+    return { ok: false, error: "Forbidden: mail or apps permission required." };
+  }
   try {
     const data = await agent.quickInstall.getRoundcubeSettings();
     return { ok: true, data };
@@ -145,7 +175,10 @@ export async function updateRoundcubeSettingsAction(
   _prev: UpdateRoundcubeSettingsResult | null,
   fd: FormData,
 ): Promise<UpdateRoundcubeSettingsResult> {
-  const s = await requireAdmin();
+  const s = await requireSession();
+  if (!hasAnyPermission(s, ["apps", "mail"])) {
+    return { ok: false, error: "Forbidden: mail or apps permission required." };
+  }
   const mailHost = String(fd.get("mail_host") ?? "").trim();
   const imapPort = Number(fd.get("imap_port") ?? 993);
   const smtpPort = Number(fd.get("smtp_port") ?? 587);
@@ -191,7 +224,7 @@ export async function updateRoundcubeSettingsAction(
  *  domain suggestions the agent extracted from /domains. Wrapped as a
  *  Result so the client can render "n8n not installed yet" gracefully. */
 export async function getN8nSettingsAction(): Promise<GetN8nSettingsResult> {
-  await requireSession();
+  await requirePermission("apps");
   try {
     const data = await agent.quickInstall.getN8nSettings();
     return { ok: true, data };
@@ -208,7 +241,7 @@ export async function updateN8nSettingsAction(
   _prev: UpdateN8nSettingsResult | null,
   fd: FormData,
 ): Promise<UpdateN8nSettingsResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("apps");
   const host = String(fd.get("host") ?? "").trim();
   const protocolRaw = String(fd.get("protocol") ?? "").trim().toLowerCase();
   const webhookUrl = String(fd.get("webhook_url") ?? "").trim();
@@ -257,7 +290,7 @@ export async function updateN8nAction(
   _prev: UpdateN8nResult | null,
   _fd: FormData,
 ): Promise<UpdateN8nResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("apps");
   try {
     const accepted = await agent.quickInstall.updateN8n();
     writeAudit({
@@ -286,7 +319,10 @@ export async function updateN8nAction(
  *  as a Result so the UI can render "phpMyAdmin not installed yet"
  *  gracefully instead of throwing. */
 export async function getPhpMyAdminSettingsAction(): Promise<GetPhpMyAdminSettingsResult> {
-  await requireSession();
+  const s = await requireSession();
+  if (!hasAnyPermission(s, ["apps", "databases"])) {
+    return { ok: false, error: "Forbidden: databases or apps permission required." };
+  }
   try {
     const data = await agent.quickInstall.getPhpMyAdminSettings();
     return { ok: true, data };
@@ -304,7 +340,10 @@ export async function updatePhpMyAdminSettingsAction(
   _prev: UpdatePhpMyAdminSettingsResult | null,
   fd: FormData,
 ): Promise<UpdatePhpMyAdminSettingsResult> {
-  const s = await requireAdmin();
+  const s = await requireSession();
+  if (!hasAnyPermission(s, ["apps", "databases"])) {
+    return { ok: false, error: "Forbidden: databases or apps permission required." };
+  }
   const absoluteUri = String(fd.get("absolute_uri") ?? "").trim();
   // Empty is allowed — means "clear the env" (revert to default). Any
   // non-empty value must look like a URL; the agent re-validates.
@@ -349,10 +388,18 @@ export async function setBindAction(
   _prev: SetBindResult | null,
   fd: FormData,
 ): Promise<SetBindResult> {
-  const s = await requireAdmin();
+  const s = await requireSession();
   const slug = String(fd.get("slug") ?? "").trim();
   const bind = String(fd.get("bind") ?? "").trim();
   if (!slug) return { ok: false, error: "missing slug" };
+  const allowed =
+    isAdminRole(s.role) ||
+    hasPermission(s, "apps") ||
+    (DB_QUICK_SLUGS.has(slug) && hasPermission(s, "databases")) ||
+    (MAIL_QUICK_SLUGS.has(slug) && hasPermission(s, "mail"));
+  if (!allowed) {
+    return { ok: false, error: "Forbidden: missing permission to modify bind." };
+  }
   if (bind !== "127.0.0.1" && bind !== "0.0.0.0") {
     return { ok: false, error: "bind must be 127.0.0.1 or 0.0.0.0" };
   }

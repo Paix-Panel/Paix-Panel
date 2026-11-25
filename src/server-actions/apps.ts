@@ -11,12 +11,26 @@ import {
   type DockerSpec,
   type GitStatusResp,
 } from "@/lib/agent";
-import { requireAdmin, requireSession } from "@/lib/auth";
+import {
+  isAdminRole,
+  requireAdmin,
+  requirePermission,
+  type Session,
+} from "@/lib/auth";
+import { isAppAllowed } from "@/lib/permissions";
 import { writeAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { getSetting, setSetting } from "@/lib/settings";
 import { applyAppRouting } from "@/lib/appRouting";
 import { recordAppDeploy, slotConflict } from "@/lib/appRows";
+
+function isSubdomainAllowedForApp(s: Session, subdomain: string | null): boolean {
+  if (isAdminRole(s.role) || !subdomain) return true;
+  const scopedDomains = s.permissions?.scopes?.domains;
+  if (!scopedDomains || scopedDomains.length === 0) return true;
+  const target = subdomain.trim().toLowerCase().replace(/\.$/, "");
+  return scopedDomains.some((d) => target === d || target.endsWith(`.${d}`));
+}
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T }
@@ -43,7 +57,7 @@ export type RoutingOutcome = {
 const AUTO_CHECK_KEY = "apps.auto_check_updates";
 
 export async function getAutoCheckUpdates(): Promise<boolean> {
-  await requireSession();
+  await requirePermission("apps");
   return getSetting(AUTO_CHECK_KEY, "true") !== "false";
 }
 
@@ -70,7 +84,10 @@ export async function setAutoCheckUpdatesAction(
 export async function refreshGitStatusAction(
   name: string,
 ): Promise<{ ok: true; status: GitStatusResp } | { ok: false; error: string }> {
-  await requireAdmin();
+  const s = await requirePermission("apps");
+  if (!isAppAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: app not assigned to your account." };
+  }
   try {
     return { ok: true, status: await agent.apps.gitStatus(name) };
   } catch (e: unknown) {
@@ -83,7 +100,7 @@ export async function deployAppAction(
   fd: FormData,
 ): Promise<ActionResult<{ taskId: string }>> {
   if (fd.get("runtime") === "docker") return deployDockerApp(fd);
-  const s = await requireAdmin();
+  const s = await requirePermission("apps");
   // Only a form that has an env field replaces the env file. The deploy form
   // has none, and sending [] made the agent empty /etc/vps-panel/apps/<name>.env
   // (and the build's variables) on every deploy; undefined keeps the file.
@@ -113,6 +130,12 @@ export async function deployAppAction(
   // Only the deploy stage (or the full pipeline) persists the app row to
   // panel.db — pull/install/build are "preview" stages that don't
   // commit the operator to anything visible in /apps yet.
+  if (req.name && !isAppAllowed(s, req.name)) {
+    return { ok: false, error: "Forbidden: your account can only manage assigned apps." };
+  }
+  if (!isSubdomainAllowedForApp(s, req.subdomain)) {
+    return { ok: false, error: "Forbidden: domain is outside your assigned scope." };
+  }
   const persistsRow = step === "deploy" || step === "all";
   const auditAction = `apps.${step}`;
   if (persistsRow) {
@@ -144,7 +167,7 @@ export async function deployAppAction(
  * replaces the env file.
  */
 async function deployDockerApp(fd: FormData): Promise<ActionResult<{ taskId: string }>> {
-  const s = await requireAdmin();
+  const s = await requirePermission("apps");
   const fromGit = fd.get("source") === "git";
   const steps = fromGit ? (["pull", "build", "deploy", "all"] as const) : (["pull", "deploy", "all"] as const);
   const stepRaw = String(fd.get("step") ?? "deploy");
@@ -152,6 +175,13 @@ async function deployDockerApp(fd: FormData): Promise<ActionResult<{ taskId: str
     ? (stepRaw as CreateApp["step"])
     : "deploy";
   const name = String(fd.get("name") ?? "").trim();
+  const subdomain = String(fd.get("subdomain") ?? "").trim().toLowerCase();
+  if (name && !isAppAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: your account can only manage assigned apps." };
+  }
+  if (!isSubdomainAllowedForApp(s, subdomain)) {
+    return { ok: false, error: "Forbidden: domain is outside your assigned scope." };
+  }
   const repoUrl = String(fd.get("repo_url") ?? "").trim();
   const docker: DockerSpec = {
     image: fromGit ? "" : String(fd.get("image") ?? "").trim(),
@@ -214,7 +244,7 @@ async function deployDockerApp(fd: FormData): Promise<ActionResult<{ taskId: str
 /** What a pulled image declares, so the Docker form can fill in the port and
  *  the folders to keep. */
 export async function dockerImageInfoAction(image: string): Promise<ActionResult<DockerImageInfo>> {
-  await requireAdmin();
+  await requirePermission("apps");
   try {
     return { ok: true, data: await agent.docker.imageInfo({ image: image.trim() }) };
   } catch (e: unknown) {
@@ -224,7 +254,10 @@ export async function dockerImageInfoAction(image: string): Promise<ActionResult
 
 /** What an app's last build from Git declares (port, folders). */
 export async function dockerBuildInfoAction(name: string): Promise<ActionResult<DockerImageInfo>> {
-  await requireAdmin();
+  const s = await requirePermission("apps");
+  if (!isAppAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: app not assigned to your account." };
+  }
   try {
     return { ok: true, data: await agent.docker.imageInfo({ app: name }) };
   } catch (e: unknown) {
@@ -234,7 +267,10 @@ export async function dockerBuildInfoAction(name: string): Promise<ActionResult<
 
 /** Ask the registry whether a Docker app's image has a newer build. */
 export async function refreshImageStatusAction(name: string): Promise<ActionResult<DockerImageStatus>> {
-  await requireAdmin();
+  const s = await requirePermission("apps");
+  if (!isAppAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: app not assigned to your account." };
+  }
   try {
     return { ok: true, data: await agent.apps.imageStatus(name) };
   } catch (e: unknown) {
@@ -251,7 +287,10 @@ export async function deleteAppAction(
   name: string,
   opts?: { wipe?: boolean },
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("apps");
+  if (!isAppAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: app not assigned to your account." };
+  }
   const wipe = !!opts?.wipe;
   try {
     await agent.apps.delete(name, { wipe });
@@ -284,7 +323,8 @@ export async function deleteAppAction(
  * Turbopack rejects sync exports at build time).
  */
 export async function getAppRepoUrl(name: string): Promise<string | null> {
-  await requireSession();
+  const s = await requirePermission("apps");
+  if (!isAppAllowed(s, name)) return null;
   const row = db()
     .prepare(`SELECT repo_url FROM apps WHERE name = ?`)
     .get(name) as { repo_url: string | null } | undefined;
@@ -333,7 +373,10 @@ export async function updateAppRepoUrlAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("apps");
+  if (!isAppAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: app not assigned to your account." };
+  }
   const url = String(fd.get("repo_url") ?? "").trim();
   if (url.length > 0) {
     const problem = repoUrlProblem(url);
@@ -359,7 +402,8 @@ export async function updateAppRepoUrlAction(
 /** Current ExecStart for the app, from panel.db. Falls back to the deploy-form
  *  default so the editor always has a sensible starting value. */
 export async function getAppEntrypoint(name: string): Promise<string> {
-  await requireSession();
+  const s = await requirePermission("apps");
+  if (!isAppAllowed(s, name)) return "/usr/bin/npm start";
   const row = db()
     .prepare(`SELECT entrypoint FROM apps WHERE name = ?`)
     .get(name) as { entrypoint: string | null } | undefined;
@@ -375,7 +419,10 @@ export async function updateAppEntrypointAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("apps");
+  if (!isAppAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: app not assigned to your account." };
+  }
   const execStart = String(fd.get("exec_start") ?? "").trim();
   if (!execStart) {
     return { ok: false, error: "Exec start must not be empty." };
@@ -418,7 +465,10 @@ async function appLifecycleAction(
   name: string,
   verb: "start" | "stop" | "restart",
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("apps");
+  if (!isAppAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: app not assigned to your account." };
+  }
   // The agent refuses too (409); answering here keeps the audit log free of
   // a failed attempt for something the UI already greys out.
   if (verb !== "stop" && isUnassigned(name)) {
@@ -465,9 +515,15 @@ export async function setAppDomainAction(
   _prev: ActionResult<RoutingOutcome> | null,
   fd: FormData,
 ): Promise<ActionResult<RoutingOutcome>> {
-  const s = await requireAdmin();
+  const s = await requirePermission("apps");
+  if (!isAppAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: app not assigned to your account." };
+  }
   const raw = String(fd.get("slot") ?? "").trim();
   const domain = raw === "" ? null : raw.split("|")[0].trim().toLowerCase();
+  if (!isSubdomainAllowedForApp(s, domain)) {
+    return { ok: false, error: "Forbidden: domain is outside your assigned scope." };
+  }
   try {
     const outcome = await applyAppRouting(s.userId, name, domain);
     revalidatePath("/apps");
@@ -493,7 +549,10 @@ export async function restartAppAction(name: string): Promise<ActionResult> {
 export async function updateAppAction(
   name: string,
 ): Promise<{ ok: true; taskId: string } | { ok: false; error: string }> {
-  const s = await requireAdmin();
+  const s = await requirePermission("apps");
+  if (!isAppAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: app not assigned to your account." };
+  }
   try {
     const accepted = await agent.apps.update(name);
     writeAudit({
@@ -522,7 +581,10 @@ export async function updateAppAction(
 // endpoint instead, which accepts any unit name with the start|stop|restart
 // whitelist.
 export async function restartExternalAppAction(name: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("apps");
+  if (!isAppAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: app not assigned to your account." };
+  }
   try {
     await agent.services.action(`${name}.service`, "restart");
   } catch (e: unknown) {
@@ -545,7 +607,10 @@ export async function restartExternalAppAction(name: string): Promise<ActionResu
 export async function listAppEnvFilesAction(
   name: string,
 ): Promise<{ ok: true; data: AppEnvFilesResp } | { ok: false; error: string }> {
-  await requireAdmin();
+  const s = await requirePermission("apps");
+  if (!isAppAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: app not assigned to your account." };
+  }
   try {
     const data = await agent.apps.listEnvFiles(name);
     return { ok: true, data };
@@ -569,7 +634,10 @@ export async function saveAppEnvFileAction(
 ): Promise<
   { ok: true; restarted: string | null } | { ok: false; error: string }
 > {
-  const s = await requireAdmin();
+  const s = await requirePermission("apps");
+  if (!isAppAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: app not assigned to your account." };
+  }
   try {
     const r = await agent.apps.saveEnvFile(name, { path, content, restart });
     writeAudit({
@@ -608,7 +676,10 @@ export async function deleteAppEnvFileAction(
 ): Promise<
   { ok: true; restarted: string | null } | { ok: false; error: string }
 > {
-  const s = await requireAdmin();
+  const s = await requirePermission("apps");
+  if (!isAppAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: app not assigned to your account." };
+  }
   try {
     const r = await agent.apps.deleteEnvFile(name, { path, restart });
     writeAudit({
@@ -648,7 +719,8 @@ export async function deleteAppEnvFileAction(
 export async function checkAppSourceStateAction(
   name: string,
 ): Promise<"missing" | "empty" | "populated" | null> {
-  await requireAdmin();
+  const s = await requirePermission("apps");
+  if (!isAppAllowed(s, name)) return null;
   // Same regex the agent enforces; reject early so we don't paint a noisy
   // 400 in the network log while the operator is mid-keystroke.
   if (!/^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/.test(name)) return null;

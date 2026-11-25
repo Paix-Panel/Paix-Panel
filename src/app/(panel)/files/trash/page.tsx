@@ -1,27 +1,21 @@
 import Link from "next/link";
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
 import { agent, type TrashRow } from "@/lib/agent";
 import { requireSession } from "@/lib/auth";
+import { hasPermission } from "@/lib/permissions";
 import styles from "@/components/page.module.css";
 import TrashTable from "./TrashTable";
 
 export const dynamic = "force-dynamic";
 
-/**
- * Everything deleted from /files lands here rather than being `rm`'d. The
- * agent's purge loop collects entries older than 30 days; until then a delete
- * is a mistake you can walk back.
- */
 export default async function TrashPage() {
-  // The names and paths of deleted files: admins only, like the listings.
   const s = await requireSession();
-  if (s.role !== "admin") {
+  if (!hasPermission(s, "files")) {
     return (
-      <div className={styles.head}>
-        <div>
-          <h1 className={styles.title}>Trash</h1>
-          <div className={styles.subtitle}>Only admins can browse the server&apos;s files.</div>
-        </div>
-      </div>
+      <AccessRestricted
+        title="Trash access restricted"
+        message="You do not have permission to browse or restore deleted files."
+      />
     );
   }
   let rows: TrashRow[];

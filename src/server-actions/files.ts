@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { agent, type FileListing, type TrashRow } from "@/lib/agent";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 import { agentErrorMessage } from "@/lib/redirects";
 
@@ -43,7 +43,7 @@ export async function listDirAction(
   root: string,
   path: string,
 ): Promise<{ ok: true; listing: FileListing } | { ok: false; error: string }> {
-  await requireAdmin();
+  await requirePermission("files");
   try {
     return { ok: true, listing: await agent.files.list(root, path) };
   } catch (e: unknown) {
@@ -56,7 +56,7 @@ export async function createFolderAction(
   path: string,
   name: string,
 ): Promise<FilesResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("files");
   try {
     await agent.files.mkdir(root, path, name);
     writeAudit({
@@ -77,7 +77,7 @@ export async function createFileAction(
   path: string,
   name: string,
 ): Promise<FilesResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("files");
   try {
     await agent.files.newFile(root, path, name);
     writeAudit({
@@ -98,7 +98,7 @@ export async function renameAction(
   path: string,
   newName: string,
 ): Promise<FilesResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("files");
   try {
     await agent.files.rename(root, path, newName);
     writeAudit({
@@ -124,7 +124,7 @@ export async function moveAction(
   paths: string[],
   dest: string,
 ): Promise<FilesResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("files");
   try {
     const res = await agent.files.move(root, paths, dest);
     const rootPath = await rootPathOf(root);
@@ -156,7 +156,7 @@ export async function trashAction(
   root: string,
   paths: string[],
 ): Promise<FilesResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("files");
   try {
     const res = await agent.files.trash(root, paths);
     const rootPath = await rootPathOf(root);
@@ -187,7 +187,7 @@ export async function trashAction(
 export async function listTrashAction(): Promise<
   { ok: true; rows: TrashRow[] } | { ok: false; error: string }
 > {
-  await requireAdmin();
+  await requirePermission("files");
   try {
     return { ok: true, rows: await agent.files.listTrash() };
   } catch (e: unknown) {
@@ -196,7 +196,7 @@ export async function listTrashAction(): Promise<
 }
 
 export async function restoreAction(id: string): Promise<FilesResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("files");
   try {
     const res = await agent.files.restore(id);
     writeAudit({
@@ -216,7 +216,7 @@ export async function restoreAction(id: string): Promise<FilesResult> {
 /** Permanent. This is the only endpoint in /files that actually destroys
  *  data — the 30-day purge loop in the agent does the same thing on a timer. */
 export async function purgeTrashAction(id: string): Promise<FilesResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("files");
   try {
     await agent.files.purge(id);
     writeAudit({ actorId: s.userId, action: "files.purge", target: id, result: "ok" });
@@ -228,7 +228,7 @@ export async function purgeTrashAction(id: string): Promise<FilesResult> {
 }
 
 export async function emptyTrashAction(): Promise<FilesResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("files");
   try {
     await agent.files.emptyTrash();
     writeAudit({

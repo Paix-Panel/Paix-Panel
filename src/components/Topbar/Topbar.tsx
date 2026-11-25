@@ -1,4 +1,6 @@
 import { logoutAction } from "@/server-actions/auth";
+import { isAdminRole, roleDisplayLabel, type UserRole } from "@/lib/permissions";
+import StatusBadge from "@/components/StatusBadge/StatusBadge";
 import HamburgerButton from "./HamburgerButton";
 import ServerClock from "./ServerClock";
 import UpdateButton from "./UpdateButton";
@@ -6,21 +8,24 @@ import styles from "./Topbar.module.css";
 
 type Props = {
   email: string;
+  role: UserRole;
   timezone: string;
 };
 
-export default function Topbar({ email, timezone }: Props) {
-  // Capture the server's wall-clock at render time. The client component
-  // computes drift against its own clock so the displayed time tracks the
-  // server even when the operator's machine is skewed or in a different TZ.
+export default function Topbar({ email, role, timezone }: Props) {
   const initialServerMs = Date.now();
+  const isAdmin = isAdminRole(role);
   return (
     <header className={styles.bar}>
       <HamburgerButton />
       <ServerClock initialServerMs={initialServerMs} timezone={timezone} />
       <div className={styles.spacer} />
       <div className={styles.user}>
-        <UpdateButton />
+        {isAdmin && <UpdateButton />}
+        <StatusBadge
+          text={roleDisplayLabel(role)}
+          tone={role === "super_admin" ? "info" : role === "admin" ? "ok" : "muted"}
+        />
         <span className={styles.email}>{email}</span>
         <form action={logoutAction}>
           <button type="submit" className={styles.signOut}>

@@ -26,6 +26,7 @@ import N8nUpdateButton from "./N8nUpdateButton";
 import PhpMyAdminSettings from "./PhpMyAdminSettings";
 import TailscaleManager from "./TailscaleManager";
 import { PHASE_LABEL, phaseTone, type TailscaleCard } from "@/lib/tailscale";
+import { RUNTIME_DEPLOY_MAP } from "@/lib/permissions";
 
 type Props = {
   recipes: QuickInstallRecipe[];
@@ -465,6 +466,32 @@ export default function QuickInstallStrip({
                     isReBindingThis={reBindingThis}
                     bindFormAction={bindFormAction}
                   />
+                ) : RUNTIME_DEPLOY_MAP[r.slug] ? (
+                  <>
+                    <span className={styles.installedBadge} style={{ flex: 1 }}>
+                      Installed
+                    </span>
+                    <Link
+                      href={`/apps/new?method=github&runtime=${encodeURIComponent(RUNTIME_DEPLOY_MAP[r.slug])}`}
+                      className={styles.openBtn}
+                      title={`Deploy a ${r.name} app`}
+                    >
+                      Deploy App →
+                    </Link>
+                  </>
+                ) : r.slug === "pm2" || r.slug === "supervisor" ? (
+                  <>
+                    <span className={styles.installedBadge} style={{ flex: 1 }}>
+                      Installed
+                    </span>
+                    <Link
+                      href="/services"
+                      className={styles.localBadge}
+                      style={{ textDecoration: "none" }}
+                    >
+                      Services →
+                    </Link>
+                  </>
                 ) : (
                   <span className={styles.installedBadge}>Installed</span>
                 )}

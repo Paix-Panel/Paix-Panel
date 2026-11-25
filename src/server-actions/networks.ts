@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 import { setSetting } from "@/lib/settings";
 import { nodeIdentity, ownName, ownUrl } from "@/lib/networks/identity";
@@ -46,7 +46,7 @@ async function reachableSelf(): Promise<string> {
 /** The name other servers see; the page saves it as the operator types.
  *  Empty goes back to the host name. */
 export async function saveNodeNameAction(raw: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("services");
   try {
     const trimmed = String(raw ?? "").trim();
     const name = trimmed ? cleanName(trimmed, "Server name") : "";
@@ -60,7 +60,7 @@ export async function saveNodeNameAction(raw: string): Promise<ActionResult> {
 }
 
 export async function createNetworkAction(_prev: ActionResult | null, fd: FormData): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("services");
   let name = "";
   try {
     name = cleanName(fd.get("name"), "Network name");
@@ -89,7 +89,7 @@ function usableInvite(code: string): Invite {
 export async function previewInviteAction(
   code: string,
 ): Promise<{ ok: true; invite: InvitePreview } | { ok: false; error: string }> {
-  await requireAdmin();
+  await requirePermission("services");
   try {
     const i = usableInvite(code);
     return { ok: true, invite: { name: i.name, url: i.url, ownerFingerprint: fingerprint(i.owner), expires: i.expires } };
@@ -99,7 +99,7 @@ export async function previewInviteAction(
 }
 
 export async function joinNetworkAction(code: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("services");
   let invite: Invite | null = null;
   try {
     invite = usableInvite(code);
@@ -146,7 +146,7 @@ export async function joinNetworkAction(code: string): Promise<ActionResult> {
 export async function createInviteAction(
   networkId: string,
 ): Promise<{ ok: true; code: string; expires: number } | { ok: false; error: string }> {
-  const s = await requireAdmin();
+  const s = await requirePermission("services");
   const net = getNetwork(networkId);
   if (!net || !isOwner(net)) return { ok: false, error: "only the network's owner invites servers" };
   const own = ownUrl();
@@ -173,7 +173,7 @@ export async function createInviteAction(
 }
 
 export async function revokeInviteAction(networkId: string, inviteId: string): Promise<void> {
-  const s = await requireAdmin();
+  const s = await requirePermission("services");
   const net = getNetwork(networkId);
   if (!net || !isOwner(net)) return;
   revokeInvite(net.id, inviteId);
@@ -182,7 +182,7 @@ export async function revokeInviteAction(networkId: string, inviteId: string): P
 }
 
 export async function removeMemberAction(networkId: string, key: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("services");
   const net = getNetwork(networkId);
   if (!net || !isOwner(net)) return { ok: false, error: "only the network's owner removes servers" };
   if (key === nodeIdentity().publicKey) return { ok: false, error: "delete the network instead" };
@@ -204,7 +204,7 @@ export async function removeMemberAction(networkId: string, key: string): Promis
 }
 
 export async function leaveNetworkAction(networkId: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("services");
   const net = getNetwork(networkId);
   if (!net) return { ok: false, error: "no such network" };
   if (isOwner(net)) return { ok: false, error: "this server owns the network: delete it instead" };
@@ -224,7 +224,7 @@ export async function leaveNetworkAction(networkId: string): Promise<ActionResul
 }
 
 export async function deleteNetworkAction(networkId: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("services");
   const net = getNetwork(networkId);
   if (!net || !isOwner(net)) return { ok: false, error: "only the network's owner deletes it" };
   // Every member is told right away and drops the network when the signed

@@ -1,3 +1,6 @@
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
+import { requireSession } from "@/lib/auth";
+import { hasPermission } from "@/lib/permissions";
 import Table from "@/components/Table/Table";
 import StatusBadge from "@/components/StatusBadge/StatusBadge";
 import styles from "@/components/page.module.css";
@@ -207,6 +210,16 @@ function NetworkCard({
 }
 
 export default async function NetworksPage() {
+  const session = await requireSession();
+  if (!hasPermission(session, "services")) {
+    return (
+      <AccessRestricted
+        title="Networks access restricted"
+        message="You do not have permission to view or manage server mesh networks."
+      />
+    );
+  }
+
   const id = nodeIdentity();
   const own = ownUrl();
   const now = Date.now();

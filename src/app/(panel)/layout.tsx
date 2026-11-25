@@ -20,9 +20,13 @@ export default async function PanelLayout({ children }: { children: React.ReactN
     <TimezoneProvider mode={timezoneMode} initialTimezone={resolvedTimezone}>
       <div className={styles.shell}>
         <RefreshKeepAlive ttlSeconds={ttlSeconds} />
-        <Sidebar />
+        <Sidebar role={s.role} permissions={s.permissions} />
         <div className={styles.main}>
-          <Topbar email={s.email} timezone={timezoneMode === "auto" ? "auto" : resolvedTimezone} />
+          <Topbar
+            email={s.email}
+            role={s.role}
+            timezone={timezoneMode === "auto" ? "auto" : resolvedTimezone}
+          />
           <main className={styles.content}>{children}</main>
         </div>
       </div>

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { agent, type ScaleProfileId, type ScaleStatus } from "@/lib/agent";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 
 export type ApplyScaleResult =
@@ -21,7 +21,7 @@ export async function applyScaleProfileAction(
   _prev: ApplyScaleResult | null,
   fd: FormData,
 ): Promise<ApplyScaleResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("services");
   const profile = String(fd.get("profile") ?? "").trim();
   const enableRaw = String(fd.get("enable") ?? "true").trim().toLowerCase();
   const enable = enableRaw !== "false" && enableRaw !== "0";

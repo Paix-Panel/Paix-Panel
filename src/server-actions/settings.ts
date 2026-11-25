@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { agent } from "@/lib/agent";
 import { db } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { requireAdmin, requirePermission } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 import { parseCidr } from "@/lib/ipMatch";
 import { UPLOAD_LIMIT_KEY, UPLOAD_LIMIT_MAX_MB } from "@/lib/uploadLimit";
@@ -19,7 +19,7 @@ export type ActionResult = { ok: true } | { ok: false; error: string };
 const PLAIN_SETTING_KEYS = ["dns.ns_pair", "panel.ip_allowlist", "panel.session_ttl_minutes"];
 
 export async function setSettingAction(key: string, value: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("settings");
   if (!PLAIN_SETTING_KEYS.includes(key) || typeof value !== "string") {
     return { ok: false, error: "This setting cannot be changed here." };
   }
@@ -90,7 +90,7 @@ export async function setPanelTimezoneAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("settings");
   const tz = String(fd.get("timezone") ?? "").trim();
   if (!tz) {
     return { ok: false, error: "timezone is required" };
@@ -126,7 +126,7 @@ export async function setPanelTimezoneAction(
 // Dedicated action for the upload limit: a whole number of MB that the agent
 // and nginx behind the upload route can take (see lib/uploadLimit.ts).
 export async function setUploadLimitAction(next: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("settings");
   const mb = Number(String(next).trim());
   if (!Number.isInteger(mb) || mb < 1 || mb > UPLOAD_LIMIT_MAX_MB) {
     return { ok: false, error: `Enter a whole number of MB from 1 to ${UPLOAD_LIMIT_MAX_MB}.` };
@@ -151,7 +151,7 @@ export async function setUploadLimitAction(next: string): Promise<ActionResult> 
 // Settings > Appearance: the panel's name in browser tabs (lib/tabTitle.ts).
 // Empty puts the default back.
 export async function setTabTitleAction(name: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("settings");
   const r = tabTitleValue(String(name));
   if ("error" in r) return { ok: false, error: r.error };
   db()
@@ -171,3 +171,48 @@ export async function setTabTitleAction(name: string): Promise<ActionResult> {
   revalidatePath("/", "layout");
   return { ok: true };
 }
+
+export async function saveGoogleAuthAction(
+  _prev: ActionResult | null,
+  fd: FormData,
+): Promise<ActionResult> {
+  const s = await requireAdmin();
+  const { saveGoogleAuthConfig, getGoogleAuthConfig } = await import("@/lib/googleAuth");
+  const clientId = String(fd.get("client_id") ?? "").trim();
+  const clientSecret = String(fd.get("client_secret") ?? "").trim();
+  const enabled = fd.get("enabled") === "on";
+
+  if (!clientId) {
+    return { ok: false, error: "Google Client ID is required." };
+  }
+  const current = getGoogleAuthConfig();
+  if (!clientSecret && !current.clientSecret) {
+    return { ok: false, error: "Google Client Secret is required for first-time setup." };
+  }
+
+  saveGoogleAuthConfig({ clientId, clientSecret, enabled });
+  writeAudit({
+    actorId: s.userId,
+    action: "settings.google_sso.save",
+    result: "ok",
+    message: `enabled=${enabled}`,
+  });
+  revalidatePath("/settings");
+  revalidatePath("/login");
+  return { ok: true };
+}
+
+export async function clearGoogleAuthAction(): Promise<ActionResult> {
+  const s = await requireAdmin();
+  const { clearGoogleAuthConfig } = await import("@/lib/googleAuth");
+  clearGoogleAuthConfig();
+  writeAudit({
+    actorId: s.userId,
+    action: "settings.google_sso.clear",
+    result: "ok",
+  });
+  revalidatePath("/settings");
+  revalidatePath("/login");
+  return { ok: true };
+}
+

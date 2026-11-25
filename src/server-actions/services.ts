@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { agent } from "@/lib/agent";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 
 // Returns the agent's refusal: thrown, its message is replaced by Next in a
@@ -11,7 +11,7 @@ export async function serviceActionExec(
   unit: string,
   action: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const s = await requireAdmin();
+  const s = await requirePermission("services");
   try {
     await agent.services.action(unit, action);
   } catch (e: unknown) {

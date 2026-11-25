@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { agent } from "@/lib/agent";
 import { db } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 import { NOTIFICATION_EVENTS } from "@/lib/notificationEvents";
 import { setSetting } from "@/lib/settings";
@@ -34,7 +34,7 @@ export async function addNotificationAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("services");
   const channel = String(fd.get("channel") ?? "");
   const target = String(fd.get("target") ?? "").trim();
   const known = new Set<string>(NOTIFICATION_EVENTS.map((e) => e.id));
@@ -65,14 +65,14 @@ export async function addNotificationAction(
 }
 
 export async function deleteNotificationAction(id: number): Promise<void> {
-  const s = await requireAdmin();
+  const s = await requirePermission("services");
   db().prepare(`DELETE FROM notifications WHERE id = ?`).run(id);
   writeAudit({ actorId: s.userId, action: "notifications.delete", target: String(id), result: "ok" });
   revalidatePath("/notifications");
 }
 
 export async function testNotificationAction(id: number): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("services");
   const row = db()
     .prepare(`SELECT channel, target, secret FROM notifications WHERE id = ?`)
     .get(id) as { channel: string; target: string; secret: string | null } | undefined;
@@ -106,7 +106,7 @@ export async function setEmailFromAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("services");
   const from = String(fd.get("email_from") ?? "").trim().toLowerCase();
   if (!from) return { ok: false, error: "pick a mailbox" };
   const list = await agent.mail.listMailboxes().catch(() => null);

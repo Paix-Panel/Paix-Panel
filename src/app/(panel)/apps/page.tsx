@@ -1,4 +1,5 @@
 import Link from "next/link";
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
 import { agent, type AppRow, type DockerImageStatus, type GitStatusResp } from "@/lib/agent";
 import StatusBadge from "@/components/StatusBadge/StatusBadge";
 import QuickInstallStrip from "@/components/QuickInstallStrip/QuickInstallStrip";
@@ -34,7 +35,8 @@ import {
   toggleAppFolderCollapsedAction,
 } from "@/server-actions/appFolders";
 import { getServerAddress } from "@/lib/serverAddress";
-import { getSession } from "@/lib/auth";
+import { requireSession } from "@/lib/auth";
+import { hasPermission, isAdminRole, isAppAllowed } from "@/lib/permissions";
 import { tailscaleCard } from "@/lib/tailscale";
 import styles from "@/components/page.module.css";
 import DeployMethodButton from "./DeployMethodButton";
@@ -192,50 +194,45 @@ function buildAppRow(
 }
 
 export default async function AppsPage() {
-  // Read both preferences first (local SQLite, sub-ms): the apps-wide
-  // toggle gates the per-app git fetches below; the n8n-specific one gates
-  // the quick-install registry probe. They're deliberately independent so
-  // the operator can keep app checks on without paying for Docker Hub (or
-  // vice versa).
+  const session = await requireSession();
+  if (!hasPermission(session, "apps")) {
+    return (
+      <AccessRestricted
+        title="Apps access restricted"
+        message="You do not have permission to view or deploy applications. Ask an administrator to grant Apps & Deployments access."
+      />
+    );
+  }
+
+  const isAdmin = isAdminRole(session.role);
+  const isScopedApps = !isAdmin && (session.permissions.scopes?.apps?.length ?? 0) > 0;
+
   const [autoCheck, n8nAutoCheck] = await Promise.all([
     getAutoCheckUpdates(),
     getN8nAutoCheck(),
   ]);
 
-  const [apps, recipes, addr, folders, folderAssignments, tsStatus, session, comments] = await Promise.all([
-    agent.apps.list().catch(() => []),
-    // checkUpdates reaches out to Docker Hub for the n8n image tag (6s
-    // timeout) — the single slowest thing on this page. Gated by n8n's own
-    // auto-check toggle (in its settings popup), NOT the apps-wide one:
-    // when off the card just doesn't show its update badge until the
-    // operator turns it back on.
-    agent.quickInstall.list({ checkUpdates: n8nAutoCheck }).catch(() => []),
-    getServerAddress(),
-    listAppFolders(),
-    listAppFolderAssignments(),
-    // Local CLI calls with an 8 s cap on the agent side; answers at once
-    // when Tailscale is not installed.
-    agent.tailscale.status().catch(() => null),
-    getSession(),
-    listAppComments(),
-  ]);
-  const serverAddress = addr.domain ?? addr.ip ?? null;
-  // Only the phase and the tailnet IP reach the client: the full status
-  // carries the login link, which the dialog fetches for admins only.
-  const tailscale = recipes.some((r) => r.slug === "tailscale" && r.installed)
-    ? { card: tailscaleCard(tsStatus), canManage: session?.role === "admin" }
-    : null;
+  const [rawApps, recipes, addr, folders, folderAssignments, tsStatus, comments] =
+    await Promise.all([
+      agent.apps.list().catch(() => []),
+      isAdmin
+        ? agent.quickInstall.list({ checkUpdates: n8nAutoCheck }).catch(() => [])
+        : Promise.resolve([]),
+      getServerAddress(),
+      listAppFolders(),
+      listAppFolderAssignments(),
+      isAdmin ? agent.tailscale.status().catch(() => null) : Promise.resolve(null),
+      listAppComments(),
+    ]);
 
-  // For every panel-managed app, run `git fetch` in parallel and compare
-  // local HEAD to upstream so we can show "up to date" vs "N behind" on
-  // each row. External apps (no panel-managed unit) are skipped — we have
-  // no clean way to know which directory they live in.
-  //
-  // Skipped entirely when the operator has turned auto-check off: that's
-  // one network round trip per app on every single page load, and the
-  // per-row Check button covers the same ground on demand.
+  const apps = rawApps.filter((a) => isAppAllowed(session, a.name));
+  const serverAddress = addr.domain ?? addr.ip ?? null;
+  const tailscale =
+    isAdmin && recipes.some((r) => r.slug === "tailscale" && r.installed)
+      ? { card: tailscaleCard(tsStatus), canManage: true }
+      : null;
+
   const gitStatuses = new Map<string, GitStatusResp>();
-  // Docker apps from a registry ask it instead (10 s cap per app on the agent).
   const imageStatuses = new Map<string, DockerImageStatus>();
   if (autoCheck) {
     const imageFetches = apps
@@ -244,7 +241,7 @@ export default async function AppsPage() {
         try {
           imageStatuses.set(a.name, await agent.apps.imageStatus(a.name));
         } catch {
-          // leave unset - the cell says "not checked"
+          // leave unset
         }
       });
     const fetches = apps
@@ -254,7 +251,7 @@ export default async function AppsPage() {
           const status = await agent.apps.gitStatus(a.name);
           gitStatuses.set(a.name, status);
         } catch {
-          // leave unset — row renders "—"
+          // leave unset
         }
       });
     await Promise.all([...fetches, ...imageFetches]);
@@ -267,13 +264,17 @@ export default async function AppsPage() {
       (a.source_dir_state === "missing" || a.source_dir_state === "empty"),
   );
 
-  // Bucket panel-managed apps by folder_id.
   const panelApps = apps.filter((a) => a.kind !== "external");
   const externalApps = apps.filter((a) => a.kind === "external");
-  const folderList = folders.map((f) => ({ id: f.id, name: f.name }));
+  const folderList = isScopedApps
+    ? []
+    : folders.map((f) => ({ id: f.id, name: f.name }));
 
   const inFolder = (folderId: number) =>
     panelApps.filter((a) => folderAssignments[a.name] === folderId);
+  const visibleFolders = isScopedApps
+    ? folders.filter((f) => inFolder(f.id).length > 0)
+    : folders;
   const ungrouped = panelApps.filter(
     (a) =>
       folderAssignments[a.name] === null ||
@@ -288,13 +289,15 @@ export default async function AppsPage() {
           <div className={styles.subtitle}>
             Node.js, Python, PHP, Go, Bun, Rust, Java, Ruby, .NET &amp; Docker apps — managed by systemd, served by nginx.
           </div>
-          <AutoUpdateCheckToggle
-            enabled={autoCheck}
-            action={setAutoCheckUpdatesAction}
-          />
+          {isAdmin && (
+            <AutoUpdateCheckToggle
+              enabled={autoCheck}
+              action={setAutoCheckUpdatesAction}
+            />
+          )}
         </div>
         <div className={styles.actions}>
-          <NewFolderButton action={createAppFolderAction} />
+          {!isScopedApps && <NewFolderButton action={createAppFolderAction} />}
           <DeployMethodButton />
         </div>
       </div>
@@ -328,14 +331,13 @@ export default async function AppsPage() {
         </div>
       )}
 
-      {panelApps.length === 0 && externalApps.length === 0 && folders.length === 0 ? (
+      {panelApps.length === 0 && externalApps.length === 0 && visibleFolders.length === 0 ? (
         <div className={styles.empty}>
           No apps deployed yet. Click <strong>+ Deploy app</strong> to add one.
         </div>
       ) : (
         <>
-          {/* Named folders, in their persisted sort order. */}
-          {folders.map((f) => {
+          {visibleFolders.map((f) => {
             const folderApps = inFolder(f.id);
             return (
               <AppFolderSection
@@ -348,7 +350,7 @@ export default async function AppsPage() {
                     gitStatuses,
                     imageStatuses,
                     comments,
-                    { currentFolderId: f.id, folders: folderList },
+                    isScopedApps ? null : { currentFolderId: f.id, folders: folderList },
                     autoCheck,
                   ),
                 )}
@@ -360,10 +362,7 @@ export default async function AppsPage() {
             );
           })}
 
-          {/* Ungrouped panel-managed apps. Always shown when there's at
-              least one, OR when there are no folders yet (so the operator
-              sees their apps even without creating folders first). */}
-          {(ungrouped.length > 0 || folders.length === 0) && (
+          {(ungrouped.length > 0 || visibleFolders.length === 0) && (
             <AppFolderSection
               folder={null}
               fallbackLabel="Ungrouped"
@@ -374,21 +373,18 @@ export default async function AppsPage() {
                   gitStatuses,
                   imageStatuses,
                   comments,
-                  { currentFolderId: null, folders: folderList },
+                  isScopedApps ? null : { currentFolderId: null, folders: folderList },
                   autoCheck,
                 ),
               )}
               empty={
-                folders.length === 0
+                visibleFolders.length === 0
                   ? "No panel-managed apps yet. Click + Deploy app to add one."
                   : "Every panel-managed app is in a folder."
               }
             />
           )}
 
-          {/* External apps (drift-detected from /srv/apps/). Can't be
-              foldered because they have no panel.db row — folder
-              assignment lives there. */}
           {externalApps.length > 0 && (
             <AppFolderSection
               folder={null}
@@ -403,27 +399,29 @@ export default async function AppsPage() {
         </>
       )}
 
-      <div style={{ marginTop: 24 }}>
-        <QuickInstallStrip
-          recipes={recipes}
-          serverAddress={serverAddress}
-          heading="1-Click App Store & Services"
-          hint="Install CMS, AI, analytics, monitoring, cloud drive & database apps in 1 click — then click Route → to add an HTTPS domain."
-          installAction={quickInstallAction}
-          bindAction={setBindAction}
-          getRoundcubeSettings={getRoundcubeSettingsAction}
-          updateRoundcubeSettings={updateRoundcubeSettingsAction}
-          getN8nSettings={getN8nSettingsAction}
-          updateN8nSettings={updateN8nSettingsAction}
-          updateN8n={updateN8nAction}
-          n8nAutoCheck={n8nAutoCheck}
-          setN8nAutoCheck={setN8nAutoCheckAction}
-          getPhpMyAdminSettings={getPhpMyAdminSettingsAction}
-          updatePhpMyAdminSettings={updatePhpMyAdminSettingsAction}
-          showRouteButton={true}
-          tailscale={tailscale}
-        />
-      </div>
+      {isAdmin && (
+        <div style={{ marginTop: 24 }}>
+          <QuickInstallStrip
+            recipes={recipes}
+            serverAddress={serverAddress}
+            heading="1-Click App Store & Services"
+            hint="Install runtimes, CMS, AI, analytics, monitoring & database apps in 1 click — then click Deploy App → or Route →."
+            installAction={quickInstallAction}
+            bindAction={setBindAction}
+            getRoundcubeSettings={getRoundcubeSettingsAction}
+            updateRoundcubeSettings={updateRoundcubeSettingsAction}
+            getN8nSettings={getN8nSettingsAction}
+            updateN8nSettings={updateN8nSettingsAction}
+            updateN8n={updateN8nAction}
+            n8nAutoCheck={n8nAutoCheck}
+            setN8nAutoCheck={setN8nAutoCheckAction}
+            getPhpMyAdminSettings={getPhpMyAdminSettingsAction}
+            updatePhpMyAdminSettings={updatePhpMyAdminSettingsAction}
+            showRouteButton={true}
+            tailscale={tailscale}
+          />
+        </div>
+      )}
     </div>
   );
 }

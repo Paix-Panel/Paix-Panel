@@ -1,7 +1,7 @@
 "use server";
 
 import { agent } from "@/lib/agent";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 import { agentErrorMessage } from "@/lib/redirects";
 
@@ -22,7 +22,7 @@ export async function setSwapAction(
   _prev: SwapResult | null,
   fd: FormData,
 ): Promise<SwapResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("settings");
   const sizeMb = wholeNumber(fd, "size_mb");
   const swappiness = wholeNumber(fd, "swappiness");
   if (sizeMb === null) return { ok: false, error: "Pick a swap file size." };

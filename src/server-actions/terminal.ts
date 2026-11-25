@@ -1,7 +1,7 @@
 "use server";
 
 import { agent, type FileEntry } from "@/lib/agent";
-import { requireAdmin } from "@/lib/auth";
+import { requirePermission } from "@/lib/auth";
 import {
   clearHistoryForPath,
   deleteHistoryEntry,
@@ -34,7 +34,7 @@ function toRel(absolute: string): string {
  * doesn't walk the entire filesystem.
  */
 export async function listDirsAction(absolute: string): Promise<TreeResult> {
-  await requireAdmin();
+  await requirePermission("terminal");
   const path = normalizePath(absolute);
   try {
     const listing = await agent.files.list("fs", toRel(path));
@@ -48,7 +48,7 @@ export async function listDirsAction(absolute: string): Promise<TreeResult> {
 }
 
 export async function historyAction(path: string): Promise<HistoryRow[]> {
-  const s = await requireAdmin();
+  const s = await requirePermission("terminal");
   return historyForPath(s.userId, path);
 }
 
@@ -61,24 +61,24 @@ export async function recordCommandAction(
   path: string,
   command: string,
 ): Promise<HistoryRow[]> {
-  const s = await requireAdmin();
+  const s = await requirePermission("terminal");
   recordCommand(s.userId, path, command);
   return historyForPath(s.userId, path);
 }
 
 export async function deleteHistoryAction(id: number, path: string): Promise<HistoryRow[]> {
-  const s = await requireAdmin();
+  const s = await requirePermission("terminal");
   deleteHistoryEntry(s.userId, id);
   return historyForPath(s.userId, path);
 }
 
 export async function clearHistoryAction(path: string): Promise<HistoryRow[]> {
-  const s = await requireAdmin();
+  const s = await requirePermission("terminal");
   clearHistoryForPath(s.userId, path);
   return historyForPath(s.userId, path);
 }
 
 export async function recentPathsAction(): Promise<{ path: string; last_used_at: string }[]> {
-  const s = await requireAdmin();
+  const s = await requirePermission("terminal");
   return recentPaths(s.userId);
 }

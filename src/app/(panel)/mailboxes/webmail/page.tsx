@@ -1,4 +1,6 @@
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
 import { requireSession } from "@/lib/auth";
+import { hasPermission, isDomainAllowed } from "@/lib/permissions";
 import { agent, type WebmailFolderSummary, type WebmailMessageSummary } from "@/lib/agent";
 import styles from "@/components/page.module.css";
 import WebmailClient from "./WebmailClient";
@@ -11,14 +13,12 @@ export default async function WebmailPage({
   searchParams: Promise<{ account?: string }>;
 }) {
   const s = await requireSession();
-  if (s.role !== "admin") {
+  if (!hasPermission(s, "mail")) {
     return (
-      <div className={styles.head}>
-        <div>
-          <h1 className={styles.title}>Webmail</h1>
-          <div className={styles.subtitle}>Only admins can access server mailboxes from the panel.</div>
-        </div>
-      </div>
+      <AccessRestricted
+        title="Webmail access restricted"
+        message="You do not have permission to access server webmail."
+      />
     );
   }
 
@@ -28,7 +28,13 @@ export default async function WebmailPage({
 
   try {
     const resp = await agent.mail.listMailboxes();
-    accounts = resp.mailboxes.map((m) => m.email);
+    accounts = resp.mailboxes
+      .map((m) => m.email)
+      .filter((email) => {
+        const at = email.lastIndexOf("@");
+        const dom = at >= 0 ? email.slice(at + 1).toLowerCase() : "";
+        return isDomainAllowed(s, dom);
+      });
   } catch (e) {
     initialError = e instanceof Error ? e.message : "Could not load mailboxes.";
   }

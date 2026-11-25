@@ -1,4 +1,7 @@
 import Link from "next/link";
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
+import { requireSession } from "@/lib/auth";
+import { hasPermission, isDomainAllowed } from "@/lib/permissions";
 import { agent, type SiteStatus, type RecordRow } from "@/lib/agent";
 import { db } from "@/lib/db";
 import StatusBadge from "@/components/StatusBadge/StatusBadge";
@@ -45,14 +48,19 @@ export default async function DomainsPage({
 }: {
   searchParams: Promise<{ prefill?: string; port?: string; error?: string }>;
 }) {
+  const session = await requireSession();
+  if (!hasPermission(session, "domains")) {
+    return (
+      <AccessRestricted
+        title="Domains access restricted"
+        message="You do not have permission to view or manage domains, DNS, or SSL certificates."
+      />
+    );
+  }
+
   const sp = await searchParams;
   const prefillRaw = (sp.prefill ?? "").trim().toLowerCase();
   const prefillDomain = FQDN_RE_PREFILL.test(prefillRaw) ? prefillRaw : undefined;
-  // ?port=<n> lets cards on /databases and /apps deep-link operators here
-  // with mode=port pre-selected, so a one-click "Route subdomain" flow on
-  // the QuickInstallStrip lands them on a half-completed form (just type
-  // the subdomain and submit). Strictly validated as 1..65535 — anything
-  // else is dropped so a malformed URL doesn't break the form.
   const prefillPortRaw = sp.port ?? "";
   const prefillPortNum = Number(prefillPortRaw);
   const prefillUpstreamPort =
@@ -61,29 +69,29 @@ export default async function DomainsPage({
     prefillPortNum <= 65535
       ? prefillPortNum
       : undefined;
-  const rows = db()
-    .prepare(
-      `SELECT s.domain          AS domain,
-              s.mode             AS mode,
-              s.upstream_port    AS upstream_port,
-              s.folder_path      AS folder_path,
-              s.ssl_requested    AS ssl_requested,
-              s.ssl_issued_at    AS ssl_issued_at,
-              s.last_ssl_error   AS last_ssl_error,
-              CASE WHEN d.name IS NULL THEN 0 ELSE 1 END AS has_dns
-         FROM sites s
-         LEFT JOIN domains d ON d.name = s.domain
-        UNION
-       SELECT d.name AS domain, NULL, NULL, NULL, NULL, NULL, NULL, 1 AS has_dns
-         FROM domains d
-        WHERE d.name NOT IN (SELECT domain FROM sites)
-        ORDER BY domain ASC`,
-    )
-    .all() as DomainRow[];
+  const rows = (
+    db()
+      .prepare(
+        `SELECT s.domain          AS domain,
+                s.mode             AS mode,
+                s.upstream_port    AS upstream_port,
+                s.folder_path      AS folder_path,
+                s.ssl_requested    AS ssl_requested,
+                s.ssl_issued_at    AS ssl_issued_at,
+                s.last_ssl_error   AS last_ssl_error,
+                CASE WHEN d.name IS NULL THEN 0 ELSE 1 END AS has_dns
+           FROM sites s
+           LEFT JOIN domains d ON d.name = s.domain
+          UNION
+         SELECT d.name AS domain, NULL, NULL, NULL, NULL, NULL, NULL, 1 AS has_dns
+           FROM domains d
+          WHERE d.name NOT IN (SELECT domain FROM sites)
+          ORDER BY domain ASC`,
+      )
+      .all() as DomainRow[]
+  ).filter((r) => isDomainAllowed(session, r.domain));
 
   const httpDomains = rows.filter((r) => r.mode !== null);
-  // Port slots that currently serve a panel app, so the Target cell can say
-  // which one (and why a delete / port change on that row is refused).
   const appBySite = new Map(
     (
       db()
@@ -91,11 +99,13 @@ export default async function DomainsPage({
         .all() as { name: string; subdomain: string }[]
     ).map((a) => [a.subdomain, a.name]),
   );
-  const agentList = await agent.sites.list().catch(() => []);
-  // Mail tenants: their `mail.<d>` ACME-helper vhosts surface as agent-only
-  // rows, and those get an "Issue SSL" control when nothing covers the name.
+  const agentList = (await agent.sites.list().catch(() => [])).filter((a) =>
+    isDomainAllowed(session, a.domain),
+  );
   const mailTenants = new Set(
-    (await agent.mail.listDomains().catch(() => [])).map((d) => d.name),
+    (await agent.mail.listDomains().catch(() => []))
+      .filter((d) => isDomainAllowed(session, d.name))
+      .map((d) => d.name),
   );
   const httpDomainSet = new Set(httpDomains.map((r) => r.domain));
   const agentOnly = agentList.filter((a) => !httpDomainSet.has(a.domain));
@@ -103,19 +113,14 @@ export default async function DomainsPage({
   const kindByDomain = new Map(agentOnly.map((a) => [a.domain, a.kind] as const));
 
   const knownDomains = new Set(rows.map((r) => r.domain));
-  const pdnsZones = await agent.dns.listZones().catch(() => []);
+  const pdnsZones = (await agent.dns.listZones().catch(() => [])).filter((z) =>
+    isDomainAllowed(session, z.name),
+  );
   const untrackedZones = pdnsZones
     .filter((z) => !knownDomains.has(z.name) && !httpDomainSet.has(z.name))
     .map((z) => z.name)
     .sort();
 
-  // Surface subdomain A/AAAA/CNAME records that live inside a managed
-  // PowerDNS zone but don't have their own site/vhost/zone entry, so adding
-  // `mail` or `members` under `example.com` from the zone detail page makes
-  // `mail.example.com` / `members.example.com` appear here too instead of
-  // being invisible at the apex level. CNAMEs need this just as much as
-  // A/AAAA — a subdomain pointing at Vercel/Netlify is still "a domain you
-  // own" that deserves a row.
   const recordsByZone = await Promise.all(
     pdnsZones.map(async (z) => ({
       zone: z.name,
@@ -133,6 +138,7 @@ export default async function DomainsPage({
       const name = r.name.toLowerCase().replace(/\.$/, "");
       if (name === zone) continue;
       if (!name.endsWith(`.${zone}`)) continue;
+      if (!isDomainAllowed(session, name)) continue;
       const entry = subdomainMap.get(name) ?? {
         ipv4: [],
         ipv6: [],
@@ -170,22 +176,19 @@ export default async function DomainsPage({
   );
   const statusByDomain = new Map(statuses.map((s) => [s.domain, s.status]));
 
-  // Per-zone count of tracked sub-sites (anything in `sites` that's a
-  // subdomain of a managed zone). Powers the "deleting will also wipe N
-  // sub-sites" line in the cascade-delete dialog.
   const managedZoneNames = new Set(
     rows.filter((r) => r.has_dns === 1).map((r) => r.domain),
   );
   const subSiteCountByZone = new Map<string, number>();
   for (const r of rows) {
-    if (r.mode === null) continue; // DNS-only row, not a "site"
+    if (r.mode === null) continue;
     const apex = r.domain.split(".").slice(-2).join(".");
     for (const z of managedZoneNames) {
       if (r.domain !== z && r.domain.endsWith(`.${z}`)) {
         subSiteCountByZone.set(z, (subSiteCountByZone.get(z) ?? 0) + 1);
       }
     }
-    void apex; // suppress unused
+    void apex;
   }
 
   return (

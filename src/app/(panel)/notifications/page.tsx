@@ -1,5 +1,7 @@
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
 import { agent } from "@/lib/agent";
 import { requireSession } from "@/lib/auth";
+import { hasPermission } from "@/lib/permissions";
 import { db } from "@/lib/db";
 import { getSetting } from "@/lib/settings";
 import Table from "@/components/Table/Table";
@@ -28,17 +30,13 @@ type Row = {
 };
 
 export default async function NotificationsPage() {
-  // A webhook URL is a credential (whoever has it can post to the channel),
-  // and the rows carry the Telegram bot tokens: admins only, like the logs.
   const s = await requireSession();
-  if (s.role !== "admin") {
+  if (!hasPermission(s, "services")) {
     return (
-      <div className={styles.head}>
-        <div>
-          <h1 className={styles.title}>Notifications</h1>
-          <div className={styles.subtitle}>Only admins can see the notification channels.</div>
-        </div>
-      </div>
+      <AccessRestricted
+        title="Notifications access restricted"
+        message="You do not have permission to view or configure alert channels."
+      />
     );
   }
   const rows = db()

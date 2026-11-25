@@ -2,7 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { agent, AgentError } from "@/lib/agent";
-import { requireAdmin } from "@/lib/auth";
+import { isAdminRole, requireAdmin, requirePermission } from "@/lib/auth";
+import { isDomainAllowed } from "@/lib/permissions";
 import { writeAudit } from "@/lib/audit";
 import { agentErrorMessage, isSafeDomain } from "@/lib/redirects";
 import { mailboxDomains } from "@/lib/mailboxDomains";
@@ -25,7 +26,7 @@ export async function createMailboxAction(
   _prev: ActionResult<{ password: string }> | null,
   fd: FormData,
 ): Promise<ActionResult<{ password: string }>> {
-  const s = await requireAdmin();
+  const s = await requirePermission("mail");
   const email = String(fd.get("email") ?? "").trim().toLowerCase();
   const password = String(fd.get("password") ?? "").trim() || undefined;
   const quota = Number(fd.get("quota_mb") ?? 1024);
@@ -35,6 +36,9 @@ export async function createMailboxAction(
     return { ok: false, error: "invalid email address" };
   }
   const domain = email.slice(atIdx + 1);
+  if (!isDomainAllowed(s, domain)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   const allowed = mailboxDomains();
   if (!allowed.includes(domain)) {
     const parent = allowed.find((d) => domain.endsWith(`.${d}`));
@@ -70,7 +74,11 @@ export async function updateMailboxAction(
   _prev: ActionResult<{ password?: string }> | null,
   fd: FormData,
 ): Promise<ActionResult<{ password?: string }>> {
-  const s = await requireAdmin();
+  const s = await requirePermission("mail");
+  const domain = email.split("@")[1] ?? "";
+  if (!domain || !isDomainAllowed(s, domain)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   const password = String(fd.get("password") ?? "").trim();
   const quotaRaw = String(fd.get("quota_mb") ?? "").trim();
   const quotaMb = quotaRaw === "" ? null : Number(quotaRaw);
@@ -133,7 +141,11 @@ export async function updateMailboxAction(
 // Returns the agent's refusal instead of throwing it: Next replaces a thrown
 // message in a production build, and the dialogs show what comes back here.
 export async function deleteMailboxAction(email: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("mail");
+  const domain = email.split("@")[1] ?? "";
+  if (!domain || !isDomainAllowed(s, domain)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   try {
     const resp = await agent.mail.deleteMailbox(email);
     writeAudit({
@@ -175,13 +187,17 @@ export async function createAliasAction(
   _prev: ActionResult<{ added: number }> | null,
   fd: FormData,
 ): Promise<ActionResult<{ added: number }>> {
-  const s = await requireAdmin();
+  const s = await requirePermission("mail");
   const source = String(fd.get("source") ?? "").trim().toLowerCase();
   const destinations = String(fd.get("destinations") ?? "")
     .split(/[\s,;]+/)
     .map((d) => d.trim())
     .filter(Boolean);
   if (!source.includes("@")) return { ok: false, error: "enter the address to forward" };
+  const domain = source.split("@")[1] ?? "";
+  if (!domain || !isDomainAllowed(s, domain)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   if (destinations.length === 0) return { ok: false, error: "enter an address to forward to" };
   try {
     const resp = await agent.mail.createAlias(source, destinations);
@@ -202,7 +218,11 @@ export async function createAliasAction(
 // Returns the agent's refusal for the Remove dialog: thrown, its message is
 // replaced by Next in a production build.
 export async function deleteAliasAction(id: number, label: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("mail");
+  const domain = label.includes("@") ? label.split("@")[1] ?? "" : "";
+  if (domain && !isDomainAllowed(s, domain)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   try {
     await agent.mail.deleteAlias(id);
   } catch (e: unknown) {
@@ -220,10 +240,14 @@ export async function trackDeliveryAction(
   _prev: ActionResult<MailTrackResp> | null,
   fd: FormData,
 ): Promise<ActionResult<MailTrackResp>> {
-  await requireAdmin();
+  const s = await requirePermission("mail");
   const address = String(fd.get("address") ?? "").trim().toLowerCase();
   const days = Number(fd.get("days") ?? 3);
   if (!address.includes("@")) return { ok: false, error: "enter a full email address" };
+  const domain = address.split("@")[1] ?? "";
+  if (!isAdminRole(s.role) && !isDomainAllowed(s, domain)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   try {
     const resp = await agent.mail.trackDelivery(address, Number.isFinite(days) ? days : 3);
     return { ok: true, data: resp };
@@ -239,7 +263,10 @@ export async function trackDeliveryAction(
  * Domains page can follow it; taskId null means a cert already covers it.
  */
 export async function ensureMailSslAction(domain: string): Promise<SslTaskResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("mail");
+  if (!isDomainAllowed(s, domain)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   try {
     const resp = await agent.mail.ensureSsl(domain);
     writeAudit({
@@ -347,9 +374,12 @@ export async function setMailDomainIpAction(
   preference: string,
   force: boolean,
 ): Promise<MailIpWriteResult<MailIpDomain>> {
-  const s = await requireAdmin();
+  const s = await requirePermission("mail");
   const name = String(domain ?? "").trim().toLowerCase();
   if (!isSafeDomain(name)) return { ok: false, error: "Not a valid domain name." };
+  if (!isDomainAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   if (!IP_PREFERENCES.includes(preference)) {
     return { ok: false, error: "Choose the server default, IPv4 or IPv6." };
   }
@@ -401,9 +431,12 @@ export async function mailIpCheckAction(): Promise<MailIpReadResult<MailIpCheck>
 export async function mailDomainDnsCheckAction(
   domain: string,
 ): Promise<MailIpReadResult<MailDomainDnsCheck>> {
-  await requireAdmin();
+  const s = await requirePermission("mail");
   const name = String(domain ?? "").trim().toLowerCase();
   if (!isSafeDomain(name)) return { ok: false, error: "Not a valid domain name." };
+  if (!isDomainAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: domain not assigned to your account." };
+  }
   try {
     return { ok: true, data: await agent.mail.domainDnsCheck(name) };
   } catch (e: unknown) {

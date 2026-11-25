@@ -2,7 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { agent } from "@/lib/agent";
-import { requireAdmin } from "@/lib/auth";
+import { isAdminRole, requirePermission } from "@/lib/auth";
+import { isDatabaseAllowed } from "@/lib/permissions";
 import { writeAudit } from "@/lib/audit";
 
 export type ActionResult<T = undefined> =
@@ -112,13 +113,16 @@ export async function createPgRoleAction(
   _prev: ActionResult<{ password: string; user: string }> | null,
   fd: FormData,
 ): Promise<ActionResult<{ password: string; user: string }>> {
-  const s = await requireAdmin();
+  const s = await requirePermission("databases");
   const user = String(fd.get("user") ?? "").trim();
   // Blank means "generate one". A typed password is used as typed: trimming
   // it set a different password from the one the form showed.
   const typed = String(fd.get("password") ?? "");
   const password = typed.trim() === "" ? undefined : typed;
   const superuser = String(fd.get("superuser") ?? "") === "on";
+  if (superuser && !isAdminRole(s.role)) {
+    return { ok: false, error: "Forbidden: only admins can grant PostgreSQL superuser." };
+  }
   try {
     const resp = await agent.postgres.createRole({ user, password, superuser });
     writeAudit({
@@ -150,9 +154,12 @@ export async function createPgDatabaseAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("databases");
   const name = String(fd.get("name") ?? "").trim();
   const owner = String(fd.get("owner") ?? "").trim() || undefined;
+  if (!isDatabaseAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: database is outside your assigned scope." };
+  }
   try {
     await agent.postgres.createDatabase({ name, owner });
     writeAudit({
@@ -181,9 +188,12 @@ export async function updatePgDatabaseAction(
   currentName: string,
   changes: { newName?: string; owner?: string },
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("databases");
   const newName = changes.newName?.trim() || undefined;
   const owner = changes.owner?.trim() || undefined;
+  if (!isDatabaseAllowed(s, currentName) || (newName && !isDatabaseAllowed(s, newName))) {
+    return { ok: false, error: "Forbidden: database not assigned to your account." };
+  }
   try {
     await agent.postgres.updateDatabase(currentName, {
       new_name: newName,
@@ -220,10 +230,13 @@ export async function pgGrantAction(
   _prev: ActionResult | null,
   fd: FormData,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("databases");
   const user = String(fd.get("user") ?? "").trim();
   const database = String(fd.get("database") ?? "").trim();
   const privileges = String(fd.get("privileges") ?? "ALL PRIVILEGES");
+  if (!isDatabaseAllowed(s, database)) {
+    return { ok: false, error: "Forbidden: database not assigned to your account." };
+  }
   try {
     await agent.postgres.grant({ user, database, privileges });
     writeAudit({
@@ -251,7 +264,10 @@ export async function pgGrantAction(
 // Like the MariaDB ones, the delete actions return the refusal: a thrown
 // message does not survive a production build.
 export async function deletePgRoleAction(user: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("databases");
+  if (!isAdminRole(s.role) && (s.permissions?.scopes?.databases?.length ?? 0) > 0) {
+    return { ok: false, error: "Forbidden: scoped database accounts cannot drop server-wide roles." };
+  }
   try {
     await agent.postgres.deleteRole(user);
     writeAudit({
@@ -276,7 +292,10 @@ export async function deletePgRoleAction(user: string): Promise<ActionResult> {
 }
 
 export async function deletePgDatabaseAction(name: string): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("databases");
+  if (!isDatabaseAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: database not assigned to your account." };
+  }
   try {
     await agent.postgres.deleteDatabase(name);
     writeAudit({
@@ -303,8 +322,11 @@ export async function deletePgDatabaseAction(name: string): Promise<ActionResult
 export async function enablePgvectorAction(
   database: string,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("databases");
   const name = database.trim();
+  if (!isDatabaseAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: database not assigned to your account." };
+  }
   try {
     await agent.postgres.enablePgvector(name);
     writeAudit({
@@ -331,8 +353,11 @@ export async function enablePgvectorAction(
 export async function disablePgvectorAction(
   database: string,
 ): Promise<ActionResult> {
-  const s = await requireAdmin();
+  const s = await requirePermission("databases");
   const name = database.trim();
+  if (!isDatabaseAllowed(s, name)) {
+    return { ok: false, error: "Forbidden: database not assigned to your account." };
+  }
   try {
     await agent.postgres.disablePgvector(name);
     writeAudit({
@@ -360,7 +385,10 @@ export async function setPgRolePasswordAction(
   user: string,
   password: string,
 ): Promise<ActionResult<{ password: string }>> {
-  const s = await requireAdmin();
+  const s = await requirePermission("databases");
+  if (!isAdminRole(s.role) && (s.permissions?.scopes?.databases?.length ?? 0) > 0) {
+    return { ok: false, error: "Forbidden: scoped database accounts cannot rotate server-wide role passwords." };
+  }
   try {
     const resp = await agent.postgres.setRolePassword(user, {
       password: password || undefined,

@@ -98,6 +98,26 @@ export function seedPreviewDb(handle: Database.Database): void {
          VALUES ('webhook', 'https://hooks.example.com/ops-alerts', 'backup.fail,ssl.expiring,network.offline')`,
       )
       .run();
+
+    // Seed sample panel users for RBAC preview (non-functional dummy hash;
+    // bootstrap super_admin is seeded with real credentials via syncAdminFromEnv).
+    const devPerms = JSON.stringify({
+      modules: ["apps", "domains", "databases", "files", "logs"],
+      scopes: {
+        apps: ["core-api", "web-storefront"],
+        domains: ["paixpanel.local"],
+        databases: ["app_prod"],
+      },
+    });
+    handle
+      .prepare(
+        `INSERT OR IGNORE INTO users
+          (email, display_name, password_hash, role, permissions_json, google_enabled, is_active)
+         VALUES
+          ('ops@paixpanel.local', 'Server Admin', '!google-oauth-only!', 'admin', '{"modules":[]}', 1, 1),
+          ('dev@paixpanel.local', 'Scoped Developer', '!google-oauth-only!', 'user', ?, 1, 1)`,
+      )
+      .run(devPerms);
   });
 
   tx();

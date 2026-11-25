@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
+import AccessRestricted from "@/components/AccessRestricted/AccessRestricted";
 import { agent, AgentError, type TaskState } from "@/lib/agent";
 import { requireSession } from "@/lib/auth";
+import { hasPermission } from "@/lib/permissions";
 import StatusBadge from "@/components/StatusBadge/StatusBadge";
 import LocalTime from "@/components/LocalTime/LocalTime";
 import LiveTaskLog from "./LiveTaskLog";
@@ -15,16 +18,15 @@ export default async function TaskDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  // Task logs can include env values and build output with secrets.
   const s = await requireSession();
-  if (s.role !== "admin") {
+  if (!hasPermission(s, "logs")) {
     return (
-      <div className={styles.head}>
-        <div>
-          <h1 className={styles.title}>Task</h1>
-          <div className={styles.subtitle}>Only admins can read task logs.</div>
-        </div>
-      </div>
+      <AccessRestricted
+        title="Task log restricted"
+        message="You do not have permission to read background task logs."
+        backHref="/dashboard"
+        backLabel="Back to dashboard"
+      />
     );
   }
 
@@ -41,15 +43,7 @@ export default async function TaskDetailPage({
   return (
     <div>
       <Link href="/tasks" className={styles.backArrow} aria-label="Back to tasks">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path
-            d="M10 3L5 8l5 5"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+        <ArrowLeft size={16} />
       </Link>
       <div className={styles.head}>
         <div>

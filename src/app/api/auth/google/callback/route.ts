@@ -10,6 +10,7 @@ import {
   resolveRequestOrigin,
   verifySignedOAuthState,
 } from "@/lib/googleAuth";
+import { contentSecurityPolicy, newNonce } from "@/lib/csp";
 import { cookies } from "next/headers";
 
 export const runtime = "nodejs";
@@ -32,6 +33,7 @@ function popupResultHtml(opts: {
   error?: string;
   targetOrigin: string;
 }): NextResponse {
+  const nonce = newNonce();
   const payload = JSON.stringify(
     opts.ok
       ? { type: "GOOGLE_OAUTH_SUCCESS", redirectTo: opts.redirectTo ?? "/dashboard" }
@@ -39,7 +41,7 @@ function popupResultHtml(opts: {
   );
   const safeTargetOrigin = JSON.stringify(opts.targetOrigin || "*");
   const statusText = opts.ok
-    ? "Signed in! Redirecting to your server panel..."
+    ? "Signed in! Redirecting to dashboard..."
     : (opts.error ?? "Sign in denied.");
   const safeEscapedStatus = statusText
     .replaceAll("&", "&amp;")
@@ -90,23 +92,56 @@ function popupResultHtml(opts: {
   <div class="box">
     <h1 class="title">${opts.ok ? "Authentication Complete" : "Access Denied"}</h1>
     <p class="msg">${safeEscapedStatus}</p>
-    <button class="btn" onclick="window.close()">Close window</button>
+    <button id="close-btn" type="button" class="btn">Close window</button>
   </div>
-  <script>
+  <script nonce="${nonce}">
     (function () {
+      var closeBtn = document.getElementById("close-btn");
+      if (closeBtn) {
+        closeBtn.addEventListener("click", function () { window.close(); });
+      }
       var data = ${payload};
       var targetOrigin = ${safeTargetOrigin};
       try {
         if (window.opener && !window.opener.closed) {
           window.opener.postMessage(data, targetOrigin);
-          window.opener.postMessage(data, "*");
+          if (targetOrigin !== "*") {
+            window.opener.postMessage(data, "*");
+          }
         }
       } catch (e) {}
-      if (data.type === "GOOGLE_OAUTH_SUCCESS") {
-        setTimeout(function () { window.close(); }, 350);
-        if (!window.opener) {
-          window.location.href = data.redirectTo || "/dashboard";
+      try {
+        if (typeof BroadcastChannel !== "undefined") {
+          var ch = new BroadcastChannel("paix_google_oauth");
+          ch.postMessage(data);
+          ch.close();
         }
+      } catch (e) {}
+      try {
+        localStorage.setItem(
+          "paix_google_oauth_result",
+          JSON.stringify({
+            type: data.type,
+            redirectTo: data.redirectTo,
+            error: data.error,
+            ts: Date.now()
+          })
+        );
+      } catch (e) {}
+      if (data.type === "GOOGLE_OAUTH_SUCCESS") {
+        var dest = (typeof data.redirectTo === "string" && data.redirectTo.indexOf("/") === 0 && data.redirectTo.indexOf("//") !== 0)
+          ? data.redirectTo
+          : "/dashboard";
+        if (!window.opener) {
+          window.location.replace(dest);
+          return;
+        }
+        setTimeout(function () { window.close(); }, 300);
+        setTimeout(function () {
+          if (!window.closed) {
+            window.location.replace(dest);
+          }
+        }, 900);
       }
     })();
   </script>
@@ -118,6 +153,7 @@ function popupResultHtml(opts: {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",
+      "Content-Security-Policy": contentSecurityPolicy(nonce),
     },
   });
 }

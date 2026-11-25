@@ -1,7 +1,7 @@
 "use client";
+"use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import type { ActionResult } from "@/server-actions/auth";
 import { useFormActionState } from "@/lib/useFormActionState";
 import PasswordInput from "@/components/PasswordInput/PasswordInput";
@@ -15,11 +15,33 @@ type Props = {
   googleConfigured?: boolean;
 };
 
+type OAuthMessage = {
+  type?: string;
+  redirectTo?: string;
+  error?: string;
+};
+
+const OAUTH_CHANNEL = "paix_google_oauth";
+const OAUTH_STORAGE_KEY = "paix_google_oauth_result";
+
 function isTrustedOrigin(origin: string): boolean {
   if (typeof window === "undefined") return false;
   if (origin === window.location.origin) return true;
-  if (origin.endsWith(".run.app") || origin.startsWith("http://localhost")) return true;
+  if (
+    origin.endsWith(".run.app") ||
+    origin.startsWith("http://localhost") ||
+    origin.startsWith("http://127.0.0.1")
+  ) {
+    return true;
+  }
   return false;
+}
+
+function safeRedirectTarget(raw?: string): string {
+  if (typeof raw === "string" && raw.startsWith("/") && !raw.startsWith("//")) {
+    return raw;
+  }
+  return "/dashboard";
 }
 
 export default function LoginForm({
@@ -29,7 +51,6 @@ export default function LoginForm({
   googleEnabled = false,
   googleConfigured = false,
 }: Props) {
-  const router = useRouter();
   const [state, formAction, pending, formRef] = useFormActionState<ActionResult | null>(action, null);
   const [showPassword, setShowPassword] = useState(false);
   const [remember, setRemember] = useState(false);
@@ -37,6 +58,7 @@ export default function LoginForm({
   const [googleError, setGoogleError] = useState<string | null>(null);
   const [googleAuthUrl, setGoogleAuthUrl] = useState<string | null>(null);
   const popupRef = useRef<Window | null>(null);
+  const redirectedRef = useRef(false);
 
   const preloadGoogleUrl = useCallback(async (rememberMe: boolean) => {
     if (!googleEnabled) {
@@ -62,43 +84,123 @@ export default function LoginForm({
     preloadGoogleUrl(remember);
   }, [remember, preloadGoogleUrl]);
 
-  useEffect(() => {
-    const onMessage = (event: MessageEvent) => {
-      if (!isTrustedOrigin(event.origin)) return;
-      const data = event.data as
-        | { type?: string; redirectTo?: string; error?: string }
-        | null;
-      if (!data || typeof data.type !== "string") return;
+  const finishGoogleSuccess = useCallback((redirectTo?: string) => {
+    if (redirectedRef.current) return;
+    redirectedRef.current = true;
+    try {
+      localStorage.removeItem(OAUTH_STORAGE_KEY);
+    } catch {
+      // ignore storage errors
+    }
+    setGoogleBusy(false);
+    setGoogleError(null);
+    window.location.assign(safeRedirectTarget(redirectTo));
+  }, []);
 
+  const handleOAuthPayload = useCallback(
+    (data: OAuthMessage | null | undefined) => {
+      if (!data || typeof data.type !== "string") return;
       if (data.type === "GOOGLE_OAUTH_SUCCESS") {
-        setGoogleBusy(false);
-        setGoogleError(null);
-        router.push(data.redirectTo || "/dashboard");
-        router.refresh();
+        finishGoogleSuccess(data.redirectTo);
       } else if (data.type === "GOOGLE_OAUTH_ERROR") {
         setGoogleBusy(false);
         setGoogleError(data.error || "Google sign-in was denied.");
         preloadGoogleUrl(remember);
       }
+    },
+    [finishGoogleSuccess, preloadGoogleUrl, remember],
+  );
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (!isTrustedOrigin(event.origin)) return;
+      handleOAuthPayload(event.data as OAuthMessage | null);
     };
     window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [router, preloadGoogleUrl, remember]);
 
-  // Reset busy indicator if user manually closes the popup without finishing
+    let channel: BroadcastChannel | null = null;
+    if (typeof BroadcastChannel !== "undefined") {
+      try {
+        channel = new BroadcastChannel(OAUTH_CHANNEL);
+        channel.onmessage = (event) => {
+          handleOAuthPayload(event.data as OAuthMessage | null);
+        };
+      } catch {
+        channel = null;
+      }
+    }
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== OAUTH_STORAGE_KEY || !event.newValue) return;
+      try {
+        const parsed = JSON.parse(event.newValue) as OAuthMessage;
+        handleOAuthPayload(parsed);
+      } catch {
+        // ignore malformed storage payload
+      }
+    };
+    window.addEventListener("storage", onStorage);
+
+    return () => {
+      window.removeEventListener("message", onMessage);
+      window.removeEventListener("storage", onStorage);
+      if (channel) channel.close();
+    };
+  }, [handleOAuthPayload]);
+
+  const checkEstablishedSession = useCallback(async (): Promise<boolean> => {
+    try {
+      const res = await fetch("/api/auth/session", { cache: "no-store" });
+      if (!res.ok) return false;
+      const data = (await res.json()) as { authenticated?: boolean; redirectTo?: string };
+      if (data.authenticated) {
+        finishGoogleSuccess(data.redirectTo);
+        return true;
+      }
+    } catch {
+      // ignore transient errors
+    }
+    return false;
+  }, [finishGoogleSuccess]);
+
+  // Verify session if popup closes (handles COOP/blocked postMessage) or window regains focus
   useEffect(() => {
     if (!googleBusy) return;
-    const timer = window.setInterval(() => {
-      if (popupRef.current && popupRef.current.closed) {
-        setGoogleBusy(false);
-        preloadGoogleUrl(remember);
+    let cancelled = false;
+
+    const onFocus = () => {
+      if (!cancelled) {
+        void checkEstablishedSession();
       }
-    }, 600);
-    return () => window.clearInterval(timer);
-  }, [googleBusy, preloadGoogleUrl, remember]);
+    };
+    window.addEventListener("focus", onFocus);
+
+    const timer = window.setInterval(async () => {
+      if (popupRef.current && popupRef.current.closed) {
+        window.clearInterval(timer);
+        const ok = await checkEstablishedSession();
+        if (!cancelled && !ok) {
+          setGoogleBusy(false);
+          preloadGoogleUrl(remember);
+        }
+      }
+    }, 500);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+      window.clearInterval(timer);
+    };
+  }, [googleBusy, checkEstablishedSession, preloadGoogleUrl, remember]);
 
   const handleGoogleClick = async () => {
     setGoogleError(null);
+    redirectedRef.current = false;
+    try {
+      localStorage.removeItem(OAUTH_STORAGE_KEY);
+    } catch {
+      // ignore storage errors
+    }
     if (!googleConfigured || !googleEnabled) {
       setGoogleError(
         "Google Sign-In is not configured yet. Sign in with email & password, then configure Google OAuth under Settings → Security.",

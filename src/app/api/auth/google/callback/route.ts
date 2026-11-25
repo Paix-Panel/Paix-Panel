@@ -50,7 +50,7 @@ function popupResultHtml(opts: {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
   const statusText = opts.ok
-    ? "Signed in! Redirecting to dashboard..."
+    ? "Signed in. Returning to your panel..."
     : (opts.error ?? "Sign in denied.");
   const safeEscapedStatus = statusText
     .replaceAll("&", "&amp;")
@@ -83,8 +83,7 @@ function popupResultHtml(opts: {
       text-align: center;
     }
     .title { font-size: 16px; font-weight: 700; margin: 0 0 8px; }
-    .msg { font-size: 14px; color: ${opts.ok ? "#7ee787" : "#ff7b72"}; line-height: 1.5; margin: 0 0 16px; }
-    .actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+    .msg { font-size: 14px; color: ${opts.ok ? "#7ee787" : "#ff7b72"}; line-height: 1.5; margin: 0${opts.ok ? "" : " 0 16px"}; }
     .btn {
       display: inline-block;
       padding: 8px 14px;
@@ -97,20 +96,13 @@ function popupResultHtml(opts: {
       border: 0;
       cursor: pointer;
     }
-    .btn-secondary {
-      background: #21262d;
-      border: 1px solid #30363d;
-    }
   </style>
 </head>
 <body>
   <div class="box">
     <h1 class="title">${opts.ok ? "Authentication Complete" : "Access Denied"}</h1>
     <p class="msg">${safeEscapedStatus}</p>
-    <div class="actions">
-      ${opts.ok ? `<a class="btn" href="${safeRedirect}">Go to Dashboard</a>` : ""}
-      <button id="close-btn" type="button" class="btn ${opts.ok ? "btn-secondary" : ""}">Close window</button>
-    </div>
+    ${opts.ok ? "" : '<button id="close-btn" type="button" class="btn">Close window</button>'}
   </div>
   <script src="/api/auth/google/callback/script" defer></script>
 </body>

@@ -87,13 +87,20 @@ export default function LoginForm({
     if (redirectedRef.current) return;
     redirectedRef.current = true;
     try {
+      if (popupRef.current && !popupRef.current.closed) {
+        popupRef.current.close();
+      }
+    } catch {
+      // ignore cross-window close errors
+    }
+    try {
       localStorage.removeItem(OAUTH_STORAGE_KEY);
     } catch {
       // ignore storage errors
     }
     setGoogleBusy(false);
     setGoogleError(null);
-    window.location.assign(safeRedirectTarget(redirectTo));
+    window.location.replace(safeRedirectTarget(redirectTo));
   }, []);
 
   const handleOAuthPayload = useCallback(

@@ -1131,6 +1131,21 @@ export const agent = {
         body: { ip },
       }),
   },
+
+  scale: {
+    status: () =>
+      agentRequest<ScaleStatus>({
+        method: "GET",
+        path: "/scale/status",
+        timeoutMs: READ_MS,
+      }),
+    apply: (profile: ScaleProfileId | "all", enable: boolean) =>
+      agentRequest<ScaleStatus>({
+        method: "POST",
+        path: "/scale/apply",
+        body: { profile, enable },
+      }),
+  },
 };
 
 export type PrivacyPart = {
@@ -1339,6 +1354,7 @@ export type QuickInstallRecipe = {
   name: string;
   description: string;
   default_port: number;
+  category?: string;
   installed: boolean;
   web_ui: boolean;
   bind: string | null;
@@ -1985,4 +2001,29 @@ export type SecurityOverview = {
   attackers: SshAttackerSummary[];
   stats: SshLogStats;
   logs: SshLogEvent[];
+};
+
+export type ScaleProfileId =
+  | "kernel_bbr"
+  | "nginx_cache"
+  | "mariadb_tune"
+  | "postgresql_tune";
+
+export type ScaleProfileState = {
+  id: ScaleProfileId;
+  label: string;
+  summary: string;
+  available: boolean;
+  enabled: boolean;
+  detail: string;
+};
+
+export type ScaleStatus = {
+  ram_total_mb: number;
+  cpu_cores: number;
+  tcp_congestion_control: string;
+  somaxconn: number;
+  file_max: number;
+  bbr_available: boolean;
+  profiles: ScaleProfileState[];
 };

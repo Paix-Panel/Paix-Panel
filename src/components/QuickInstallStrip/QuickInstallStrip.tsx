@@ -97,6 +97,65 @@ type Props = {
   tailscale?: { card: TailscaleCard; canManage: boolean } | null;
 };
 
+const CATEGORY_FALLBACK: Record<string, string> = {
+  wordpress: "Web & CMS",
+  ghost: "Web & CMS",
+  directus: "Web & CMS",
+  nocodb: "Web & CMS",
+  n8n: "AI & Automation",
+  openwebui: "AI & Automation",
+  ollama: "AI & Automation",
+  flowise: "AI & Automation",
+  nextcloud: "Cloud & Productivity",
+  vaultwarden: "Cloud & Productivity",
+  filebrowser: "Cloud & Productivity",
+  jellyfin: "Cloud & Productivity",
+  memos: "Cloud & Productivity",
+  stirlingpdf: "Cloud & Productivity",
+  roundcube: "Cloud & Productivity",
+  gitea: "DevOps & Monitoring",
+  portainer: "DevOps & Monitoring",
+  uptimekuma: "DevOps & Monitoring",
+  grafana: "DevOps & Monitoring",
+  prometheus: "DevOps & Monitoring",
+  dozzle: "DevOps & Monitoring",
+  ittools: "DevOps & Monitoring",
+  metabase: "Databases & Cache",
+  mongodb: "Databases & Cache",
+  rabbitmq: "Databases & Cache",
+  adminer: "Databases & Cache",
+  mariadb: "Databases & Cache",
+  postgresql: "Databases & Cache",
+  pgvector: "Databases & Cache",
+  redis: "Databases & Cache",
+  valkey: "Databases & Cache",
+  memcached: "Databases & Cache",
+  minio: "Databases & Cache",
+  clickhouse: "Databases & Cache",
+  meilisearch: "Databases & Cache",
+  qdrant: "Databases & Cache",
+  pgadmin: "Databases & Cache",
+  phpmyadmin: "Databases & Cache",
+  docker: "Infrastructure",
+  nginx: "Infrastructure",
+  k3s: "Infrastructure",
+  tailscale: "Infrastructure",
+};
+
+const CATEGORY_ORDER = [
+  "All",
+  "Web & CMS",
+  "AI & Automation",
+  "Cloud & Productivity",
+  "DevOps & Monitoring",
+  "Databases & Cache",
+  "Infrastructure",
+];
+
+function categoryOf(r: QuickInstallRecipe): string {
+  return r.category ?? CATEGORY_FALLBACK[r.slug] ?? "Apps";
+}
+
 export default function QuickInstallStrip({
   recipes,
   serverAddress,
@@ -125,6 +184,8 @@ export default function QuickInstallStrip({
     SetBindResult | null,
     FormData
   >(bindAction, null);
+  const [activeCategory, setActiveCategory] = useState("All");
+  const [query, setQuery] = useState("");
 
   // The actions return as soon as the agent accepts a task, so pending alone
   // re-enabled Install while apt was still running and a second click
@@ -151,77 +212,140 @@ export default function QuickInstallStrip({
 
   if (recipes.length === 0) return null;
 
+  const showCatalogControls = recipes.length > 10;
+  const presentCategories = CATEGORY_ORDER.filter(
+    (cat) => cat === "All" || recipes.some((r) => categoryOf(r) === cat),
+  );
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleRecipes = showCatalogControls
+    ? recipes.filter((r) => {
+        if (activeCategory !== "All" && categoryOf(r) !== activeCategory) {
+          return false;
+        }
+        if (!normalizedQuery) return true;
+        return `${r.name} ${r.slug} ${r.description} ${categoryOf(r)}`
+          .toLowerCase()
+          .includes(normalizedQuery);
+      })
+    : recipes;
+
   return (
     <div className={styles.wrap}>
       <div className={styles.head}>
-        <div className={styles.heading}>{heading}</div>
+        <div className={styles.heading}>
+          {heading}
+          {showCatalogControls ? ` (${recipes.length})` : ""}
+        </div>
         <div className={styles.hint}>{hint}</div>
       </div>
 
-      <div className={styles.scroll}>
-        {recipes.map((r) => {
-          const installingThis = installingSlug === r.slug;
-          const reBindingThis = rebindingSlug === r.slug;
-          const isPublic = r.bind === "0.0.0.0";
-          const url =
-            r.installed && r.web_ui && isPublic && serverAddress
-              ? `http://${serverAddress}:${r.default_port}`
-              : null;
+      {showCatalogControls && (
+        <div className={styles.toolbar}>
+          <div className={styles.tabs} role="tablist" aria-label="App categories">
+            {presentCategories.map((cat) => {
+              const count =
+                cat === "All"
+                  ? recipes.length
+                  : recipes.filter((r) => categoryOf(r) === cat).length;
+              return (
+                <button
+                  key={cat}
+                  type="button"
+                  role="tab"
+                  aria-selected={activeCategory === cat}
+                  className={`${styles.tab} ${activeCategory === cat ? styles.tabActive : ""}`}
+                  onClick={() => setActiveCategory(cat)}
+                >
+                  {cat} ({count})
+                </button>
+              );
+            })}
+          </div>
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search apps (e.g. wordpress, grafana, ai...)"
+            className={styles.searchInput}
+            aria-label="Search installable apps"
+          />
+        </div>
+      )}
 
-          return (
-            <div key={r.slug} className={styles.card}>
-              {r.slug === "n8n" &&
-                r.installed &&
-                r.update_available === true &&
-                updateN8n && <N8nUpdateButton updateAction={updateN8n} />}
-              <div className={styles.icon}>
-                <ServiceIcon slug={r.slug} size={36} />
-              </div>
-              <div className={styles.body}>
-                <div className={styles.name}>{r.name}</div>
-                {r.default_port > 0 && <div className={styles.port}>:{r.default_port}</div>}
-                {/* Per-app update-check state (currently n8n only). Shown so
-                    the operator can tell at a glance why the Update pill
-                    is/isn't appearing; flipped from the settings cog. */}
+      {visibleRecipes.length === 0 ? (
+        <div className={styles.emptyFilter}>
+          No apps match &ldquo;{query}&rdquo; in {activeCategory}.
+        </div>
+      ) : (
+        <div className={styles.scroll}>
+          {visibleRecipes.map((r) => {
+            const installingThis = installingSlug === r.slug;
+            const reBindingThis = rebindingSlug === r.slug;
+            const isPublic = r.bind === "0.0.0.0";
+            const url =
+              r.installed && r.web_ui && isPublic && serverAddress
+                ? `http://${serverAddress}:${r.default_port}`
+                : null;
+
+            return (
+              <div key={r.slug} className={styles.card}>
                 {r.slug === "n8n" &&
                   r.installed &&
-                  n8nAutoCheck !== undefined && (
-                    <div
-                      className={styles.autoCheckNote}
-                      title={
-                        n8nAutoCheck
-                          ? "Update check on — each page load asks Docker Hub whether a newer n8n image exists. Toggle it in n8n settings (cog)."
-                          : "Update check off — no registry call on page load; the Update pill won't appear. Toggle it in n8n settings (cog)."
-                      }
-                    >
-                      <span
-                        className={`${styles.autoCheckDot} ${
-                          n8nAutoCheck ? "" : styles.autoCheckDotOff
-                        }`}
-                      />
-                      update check {n8nAutoCheck ? "on" : "off"}
+                  r.update_available === true &&
+                  updateN8n && <N8nUpdateButton updateAction={updateN8n} />}
+                <div className={styles.icon}>
+                  <ServiceIcon slug={r.slug} size={36} />
+                </div>
+                <div className={styles.body}>
+                  <div className={styles.name}>{r.name}</div>
+                  {r.default_port > 0 && <div className={styles.port}>:{r.default_port}</div>}
+                  {showCatalogControls && (
+                    <div className={styles.desc} title={r.description}>
+                      {r.description}
                     </div>
                   )}
-                {/* Tailscale: this server's tailnet address where other
-                    cards show their port, and the connection state. */}
-                {r.slug === "tailscale" && r.installed && tailscale && (
-                  <>
-                    {tailscale.card.ip && <div className={styles.port}>{tailscale.card.ip}</div>}
-                    <div className={styles.autoCheckNote}>
-                      <span
-                        className={`${styles.autoCheckDot} ${
-                          phaseTone(tailscale.card.phase) === "warn"
-                            ? styles.dotWarn
-                            : phaseTone(tailscale.card.phase) === "muted"
-                              ? styles.autoCheckDotOff
-                              : ""
-                        }`}
-                      />
-                      {PHASE_LABEL[tailscale.card.phase]}
-                    </div>
-                  </>
-                )}
-              </div>
+                  {/* Per-app update-check state (currently n8n only). Shown so
+                      the operator can tell at a glance why the Update pill
+                      is/isn't appearing; flipped from the settings cog. */}
+                  {r.slug === "n8n" &&
+                    r.installed &&
+                    n8nAutoCheck !== undefined && (
+                      <div
+                        className={styles.autoCheckNote}
+                        title={
+                          n8nAutoCheck
+                            ? "Update check on — each page load asks Docker Hub whether a newer n8n image exists. Toggle it in n8n settings (cog)."
+                            : "Update check off — no registry call on page load; the Update pill won't appear. Toggle it in n8n settings (cog)."
+                        }
+                      >
+                        <span
+                          className={`${styles.autoCheckDot} ${
+                            n8nAutoCheck ? "" : styles.autoCheckDotOff
+                          }`}
+                        />
+                        update check {n8nAutoCheck ? "on" : "off"}
+                      </div>
+                    )}
+                  {/* Tailscale: this server's tailnet address where other
+                      cards show their port, and the connection state. */}
+                  {r.slug === "tailscale" && r.installed && tailscale && (
+                    <>
+                      {tailscale.card.ip && <div className={styles.port}>{tailscale.card.ip}</div>}
+                      <div className={styles.autoCheckNote}>
+                        <span
+                          className={`${styles.autoCheckDot} ${
+                            phaseTone(tailscale.card.phase) === "warn"
+                              ? styles.dotWarn
+                              : phaseTone(tailscale.card.phase) === "muted"
+                                ? styles.autoCheckDotOff
+                                : ""
+                          }`}
+                        />
+                        {PHASE_LABEL[tailscale.card.phase]}
+                      </div>
+                    </>
+                  )}
+                </div>
 
               <div className={styles.action}>
                 {!r.installed ? (
@@ -329,7 +453,8 @@ export default function QuickInstallStrip({
             </div>
           );
         })}
-      </div>
+        </div>
+      )}
 
       {installState?.ok === false && (
         <div className={shared.error} style={{ marginTop: 12 }}>

@@ -34,6 +34,15 @@ const GLYPHS = {
       <path d="M12 13V21" />
     </>
   ),
+  // High-throughput speed & scaling gauge.
+  scale: (
+    <>
+      <path d="M4.5 17a8.5 8.5 0 1 1 15 0" />
+      <path d="M12 14l4.5-4.5" />
+      <circle cx="12" cy="14" r="1.5" fill="currentColor" />
+      <path d="M7 19.5h10" />
+    </>
+  ),
   // Clock face on an open arc with an arrowhead: time, but recurring.
   cron: (
     <>

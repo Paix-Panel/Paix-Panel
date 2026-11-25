@@ -23,6 +23,7 @@ pub mod privacy;
 pub mod privacy_subject;
 pub mod quick_install;
 pub mod redirects;
+pub mod scale;
 pub mod security;
 pub mod sites;
 pub mod ssh;
@@ -239,6 +240,9 @@ pub fn router(state: AppState) -> Router {
         .route("/security/overview", get(security::overview))
         .route("/security/ban-ip", post(security::ban_ip))
         .route("/security/unban-ip", post(security::unban_ip))
+        // Performance & Scale tuning
+        .route("/scale/status", get(scale::status))
+        .route("/scale/apply", post(scale::apply))
         // Cron
         .route("/cron/jobs", get(cron::list).post(cron::create))
         .route("/cron/jobs/{id}", delete(cron::delete))

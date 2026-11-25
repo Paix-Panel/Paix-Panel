@@ -20,6 +20,7 @@ const SECTIONS: { group: string; items: NavItem[] }[] = [
     group: "Workloads",
     items: [
       { href: "/apps", label: "Apps", icon: "apps" },
+      { href: "/scale", label: "Scale & Addons", icon: "scale" },
       { href: "/cron", label: "Cron jobs", icon: "cron" },
       { href: "/services", label: "System services", icon: "services" },
     ],

@@ -46,8 +46,11 @@ const POSTGRESQL: Recipe = &[
 /// box that already runs Docker CE (docker.com's packages) keeps it: docker.io
 /// conflicts with them, and installing it on every recipe asked apt to swap the
 /// engine out from under the running containers.
-const INSTALL_DOCKER: Step =
-    &["sh", "-c", "command -v docker >/dev/null 2>&1 || apt-get install -y docker.io"];
+const INSTALL_DOCKER: Step = &[
+    "sh",
+    "-c",
+    "command -v docker >/dev/null 2>&1 || apt-get install -y -o DPkg::Lock::Timeout=120 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold docker.io",
+];
 
 /// Every container the panel runs caps its json log at 3 files of 10 MB:
 /// Docker's default keeps the log forever, and nothing else trims it.
@@ -60,6 +63,152 @@ const REDIS: Recipe = &[
     &["systemctl", "enable", "redis-server"],
     &["systemctl", "start", "redis-server"],
 ];
+
+const VALKEY: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "valkey_data"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "valkey",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:6380:6379",
+        "-v",
+        "valkey_data:/data",
+        "valkey/valkey:8-alpine",
+        "valkey-server",
+        "--appendonly",
+        "yes",
+        "--maxmemory-policy",
+        "allkeys-lru",
+    ],
+];
+
+const MEMCACHED: Recipe = &[
+    &["apt-get", "update"],
+    &["apt-get", "install", "-y", "memcached"],
+    &["systemctl", "enable", "memcached"],
+    &["systemctl", "start", "memcached"],
+];
+
+const MINIO_USER_ARG: &str = "MINIO_ROOT_USER=paixadmin";
+const MINIO_PASSWORD_ARG: &str = "MINIO_ROOT_PASSWORD=";
+
+const MINIO: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "minio_data"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "minio",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:9000:9000",
+        "-p",
+        "127.0.0.1:9001:9001",
+        "-e",
+        MINIO_USER_ARG,
+        "-e",
+        MINIO_PASSWORD_ARG,
+        "-v",
+        "minio_data:/data",
+        "quay.io/minio/minio",
+        "server",
+        "/data",
+        "--console-address",
+        ":9001",
+    ],
+];
+
+const CLICKHOUSE: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "clickhouse_data"],
+    &["docker", "volume", "create", "clickhouse_logs"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "clickhouse",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "--ulimit",
+        "nofile=262144:262144",
+        "-p",
+        "127.0.0.1:8123:8123",
+        "-p",
+        "127.0.0.1:9004:9000",
+        "-v",
+        "clickhouse_data:/var/lib/clickhouse",
+        "-v",
+        "clickhouse_logs:/var/log/clickhouse-server",
+        "clickhouse/clickhouse-server:latest",
+    ],
+];
+
+const MEILI_KEY_ARG: &str = "MEILI_MASTER_KEY=";
+
+const MEILISEARCH: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "meili_data"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "meilisearch",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:7700:7700",
+        "-e",
+        "MEILI_ENV=production",
+        "-e",
+        MEILI_KEY_ARG,
+        "-v",
+        "meili_data:/meili_data",
+        "getmeili/meilisearch:latest",
+    ],
+];
+
+// Sentinel for the dispatcher; `install_k3s_dynamic` installs lightweight
+// Kubernetes without Traefik so ports 80/443 remain under Nginx control.
+const K3S: Recipe = &[];
 
 const QDRANT: Recipe = &[
     &["apt-get", "update"],
@@ -168,11 +317,25 @@ async fn pgadmin_data_has_a_login() -> bool {
     !dir.is_empty() && std::path::Path::new(dir).join("pgadmin4.db").is_file()
 }
 
-/// A `docker run` argument as a task log shows it. pgAdmin's first password
-/// is shown once, on a line of its own, by the install that generated it.
+const DIRECTUS_KEY_ARG: &str = "KEY=";
+const DIRECTUS_SECRET_ARG: &str = "SECRET=";
+const DIRECTUS_ADMIN_PW_ARG: &str = "ADMIN_PASSWORD=";
+
 fn loggable_arg(arg: &str) -> &str {
     if arg.starts_with(PGADMIN_PASSWORD_ARG) {
         "PGADMIN_DEFAULT_PASSWORD=(not shown)"
+    } else if arg.starts_with(MINIO_PASSWORD_ARG) {
+        "MINIO_ROOT_PASSWORD=(not shown)"
+    } else if arg.starts_with(MEILI_KEY_ARG) {
+        "MEILI_MASTER_KEY=(not shown)"
+    } else if arg.starts_with(DIRECTUS_KEY_ARG) {
+        "KEY=(not shown)"
+    } else if arg.starts_with(DIRECTUS_SECRET_ARG) {
+        "SECRET=(not shown)"
+    } else if arg.starts_with(DIRECTUS_ADMIN_PW_ARG) {
+        "ADMIN_PASSWORD=(not shown)"
+    } else if arg.starts_with("WORDPRESS_DB_PASSWORD=") {
+        "WORDPRESS_DB_PASSWORD=(not shown)"
     } else {
         arg
     }
@@ -246,12 +409,654 @@ const N8N: Recipe = &[
     ],
 ];
 
+// Sentinel for `install_wordpress_dynamic`, which creates a MariaDB database
+// + user on the host and binds WordPress to `host.docker.internal:3306`.
+const WORDPRESS: Recipe = &[];
+
+const GHOST: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "ghost_data"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "ghost",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:2368:2368",
+        "-e",
+        "NODE_ENV=production",
+        "-e",
+        "database__client=sqlite3",
+        "-e",
+        "database__connection__filename=/var/lib/ghost/content/data/ghost.db",
+        "-e",
+        "url=http://localhost:2368",
+        "-v",
+        "ghost_data:/var/lib/ghost/content",
+        "ghost:5-alpine",
+    ],
+];
+
+const DIRECTUS: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "directus_db"],
+    &["docker", "volume", "create", "directus_uploads"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "directus",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:8055:8055",
+        "-e",
+        DIRECTUS_KEY_ARG,
+        "-e",
+        DIRECTUS_SECRET_ARG,
+        "-e",
+        "DB_CLIENT=sqlite3",
+        "-e",
+        "DB_FILENAME=/directus/database/data.db",
+        "-e",
+        "ADMIN_EMAIL=admin@example.com",
+        "-e",
+        DIRECTUS_ADMIN_PW_ARG,
+        "-v",
+        "directus_db:/directus/database",
+        "-v",
+        "directus_uploads:/directus/uploads",
+        "directus/directus:latest",
+    ],
+];
+
+const NOCODB: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "nocodb_data"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "nocodb",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:8086:8080",
+        "-v",
+        "nocodb_data:/usr/app/data",
+        "nocodb/nocodb:latest",
+    ],
+];
+
+const NEXTCLOUD: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "nextcloud_data"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "nextcloud",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:8087:80",
+        "-v",
+        "nextcloud_data:/var/www/html",
+        "nextcloud:latest",
+    ],
+];
+
+const GITEA: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "gitea_data"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "gitea",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:3012:3000",
+        "-p",
+        "127.0.0.1:2222:22",
+        "-v",
+        "gitea_data:/data",
+        "gitea/gitea:latest",
+    ],
+];
+
+const PORTAINER: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "portainer_data"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "portainer",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:9005:9000",
+        "-v",
+        "/var/run/docker.sock:/var/run/docker.sock",
+        "-v",
+        "portainer_data:/data",
+        "portainer/portainer-ce:latest",
+    ],
+];
+
+const UPTIMEKUMA: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "uptimekuma_data"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "uptimekuma",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:3010:3001",
+        "-v",
+        "uptimekuma_data:/app/data",
+        "louislam/uptime-kuma:1",
+    ],
+];
+
+const GRAFANA: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "grafana_data"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "grafana",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:3011:3000",
+        "-v",
+        "grafana_data:/var/lib/grafana",
+        "grafana/grafana:latest",
+    ],
+];
+
+const PROMETHEUS: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "prometheus_data"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "prometheus",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:9090:9090",
+        "-v",
+        "prometheus_data:/prometheus",
+        "prom/prometheus:latest",
+    ],
+];
+
+const DOZZLE: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "dozzle",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:8091:8080",
+        "-v",
+        "/var/run/docker.sock:/var/run/docker.sock",
+        "amir20/dozzle:latest",
+    ],
+];
+
+const METABASE: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "metabase_data"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "metabase",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:3013:3000",
+        "--add-host=host.docker.internal:host-gateway",
+        "-e",
+        "MB_DB_FILE=/metabase-data/metabase.db",
+        "-v",
+        "metabase_data:/metabase-data",
+        "metabase/metabase:latest",
+    ],
+];
+
+const OPENWEBUI: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "openwebui_data"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "openwebui",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:3014:8080",
+        "--add-host=host.docker.internal:host-gateway",
+        "-e",
+        "OLLAMA_BASE_URL=http://host.docker.internal:11434",
+        "-v",
+        "openwebui_data:/app/backend/data",
+        "ghcr.io/open-webui/open-webui:main",
+    ],
+];
+
+const OLLAMA: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "ollama_data"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "ollama",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:11434:11434",
+        "-v",
+        "ollama_data:/root/.ollama",
+        "ollama/ollama:latest",
+    ],
+];
+
+const FLOWISE: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "flowise_data"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "flowise",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:3015:3000",
+        "--add-host=host.docker.internal:host-gateway",
+        "-v",
+        "flowise_data:/root/.flowise",
+        "flowiseai/flowise:latest",
+    ],
+];
+
+const VAULTWARDEN: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "vaultwarden_data"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "vaultwarden",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:8088:80",
+        "-v",
+        "vaultwarden_data:/data",
+        "vaultwarden/server:latest",
+    ],
+];
+
+const FILEBROWSER: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "filebrowser_srv"],
+    &["docker", "volume", "create", "filebrowser_db"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "filebrowser",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:8089:80",
+        "-v",
+        "filebrowser_srv:/srv",
+        "-v",
+        "filebrowser_db:/database",
+        "filebrowser/filebrowser:latest",
+    ],
+];
+
+const JELLYFIN: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "jellyfin_config"],
+    &["docker", "volume", "create", "jellyfin_cache"],
+    &["docker", "volume", "create", "jellyfin_media"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "jellyfin",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:8096:8096",
+        "-v",
+        "jellyfin_config:/config",
+        "-v",
+        "jellyfin_cache:/cache",
+        "-v",
+        "jellyfin_media:/media",
+        "jellyfin/jellyfin:latest",
+    ],
+];
+
+const MEMOS: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "memos_data"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "memos",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:5230:5230",
+        "-v",
+        "memos_data:/var/opt/memos",
+        "neosmemo/memos:stable",
+    ],
+];
+
+const MONGODB: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "mongodb_data"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "mongodb",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:27017:27017",
+        "-v",
+        "mongodb_data:/data/db",
+        "mongo:7",
+    ],
+];
+
+const RABBITMQ: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "rabbitmq_data"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "rabbitmq",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:15672:15672",
+        "-p",
+        "127.0.0.1:5672:5672",
+        "-v",
+        "rabbitmq_data:/var/lib/rabbitmq",
+        "rabbitmq:3-management",
+    ],
+];
+
+const ADMINER: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "adminer",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:8095:8080",
+        "--add-host=host.docker.internal:host-gateway",
+        "adminer:latest",
+    ],
+];
+
+const ITTOOLS: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "ittools",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:8093:80",
+        "corentinth/it-tools:latest",
+    ],
+];
+
+const STIRLINGPDF: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "stirlingpdf_data"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "stirlingpdf",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:8094:8080",
+        "-v",
+        "stirlingpdf_data:/configs",
+        "stirlingtools/stirling-pdf:latest",
+    ],
+];
+
 #[derive(Serialize, Clone, Copy)]
 pub struct RecipeInfo {
     pub slug: &'static str,
     pub name: &'static str,
     pub description: &'static str,
     pub default_port: u16,
+    pub category: &'static str,
 }
 
 #[derive(Serialize)]
@@ -260,6 +1065,7 @@ pub struct RecipeListItem {
     pub name: &'static str,
     pub description: &'static str,
     pub default_port: u16,
+    pub category: &'static str,
     pub installed: bool,
     pub web_ui: bool,
     pub bind: Option<String>,
@@ -274,10 +1080,297 @@ pub struct RecipeListItem {
 const RECIPES: &[(RecipeInfo, Recipe, Check)] = &[
     (
         RecipeInfo {
+            slug: "wordpress",
+            name: "WordPress",
+            description: "World's #1 CMS, blogs & WooCommerce e-commerce store. Auto-wired to host MariaDB.",
+            default_port: 8092,
+            category: "Web & CMS",
+        },
+        WORDPRESS,
+        Check::DockerContainer("wordpress"),
+    ),
+    (
+        RecipeInfo {
+            slug: "ghost",
+            name: "Ghost CMS",
+            description: "Fast publishing platform for modern blogs, memberships & newsletters.",
+            default_port: 2368,
+            category: "Web & CMS",
+        },
+        GHOST,
+        Check::DockerContainer("ghost"),
+    ),
+    (
+        RecipeInfo {
+            slug: "directus",
+            name: "Directus",
+            description: "Headless CMS & instant REST/GraphQL data studio.",
+            default_port: 8055,
+            category: "Web & CMS",
+        },
+        DIRECTUS,
+        Check::DockerContainer("directus"),
+    ),
+    (
+        RecipeInfo {
+            slug: "nocodb",
+            name: "NocoDB",
+            description: "Open-source Airtable alternative — no-code smart spreadsheets & APIs.",
+            default_port: 8086,
+            category: "Web & CMS",
+        },
+        NOCODB,
+        Check::DockerContainer("nocodb"),
+    ),
+    (
+        RecipeInfo {
+            slug: "n8n",
+            name: "n8n",
+            description: "Workflow automation with a visual editor and 400+ integrations. Runs via Docker on port 5678.",
+            default_port: 5678,
+            category: "AI & Automation",
+        },
+        N8N,
+        Check::DockerContainer("n8n"),
+    ),
+    (
+        RecipeInfo {
+            slug: "openwebui",
+            name: "Open WebUI",
+            description: "Self-hosted ChatGPT-style AI web interface for local & API LLMs.",
+            default_port: 3014,
+            category: "AI & Automation",
+        },
+        OPENWEBUI,
+        Check::DockerContainer("openwebui"),
+    ),
+    (
+        RecipeInfo {
+            slug: "ollama",
+            name: "Ollama AI",
+            description: "Run Llama, Qwen, DeepSeek & Mistral AI models locally via REST API.",
+            default_port: 11434,
+            category: "AI & Automation",
+        },
+        OLLAMA,
+        Check::DockerContainer("ollama"),
+    ),
+    (
+        RecipeInfo {
+            slug: "flowise",
+            name: "Flowise AI",
+            description: "Drag-and-drop AI agents, chatbots & RAG workflow builder.",
+            default_port: 3015,
+            category: "AI & Automation",
+        },
+        FLOWISE,
+        Check::DockerContainer("flowise"),
+    ),
+    (
+        RecipeInfo {
+            slug: "nextcloud",
+            name: "Nextcloud",
+            description: "Self-hosted cloud drive, file sync, calendar & team collaboration.",
+            default_port: 8087,
+            category: "Cloud & Productivity",
+        },
+        NEXTCLOUD,
+        Check::DockerContainer("nextcloud"),
+    ),
+    (
+        RecipeInfo {
+            slug: "vaultwarden",
+            name: "Vaultwarden",
+            description: "Bitwarden-compatible self-hosted password manager & secrets vault.",
+            default_port: 8088,
+            category: "Cloud & Productivity",
+        },
+        VAULTWARDEN,
+        Check::DockerContainer("vaultwarden"),
+    ),
+    (
+        RecipeInfo {
+            slug: "filebrowser",
+            name: "FileBrowser",
+            description: "Fast web file manager with upload, preview & shareable links.",
+            default_port: 8089,
+            category: "Cloud & Productivity",
+        },
+        FILEBROWSER,
+        Check::DockerContainer("filebrowser"),
+    ),
+    (
+        RecipeInfo {
+            slug: "jellyfin",
+            name: "Jellyfin",
+            description: "Self-hosted media streaming server for movies, music & live TV.",
+            default_port: 8096,
+            category: "Cloud & Productivity",
+        },
+        JELLYFIN,
+        Check::DockerContainer("jellyfin"),
+    ),
+    (
+        RecipeInfo {
+            slug: "memos",
+            name: "Memos",
+            description: "Fast, privacy-first note taking and lightweight knowledge hub.",
+            default_port: 5230,
+            category: "Cloud & Productivity",
+        },
+        MEMOS,
+        Check::DockerContainer("memos"),
+    ),
+    (
+        RecipeInfo {
+            slug: "stirlingpdf",
+            name: "Stirling PDF",
+            description: "All-in-one PDF tools: merge, split, compress, OCR & convert.",
+            default_port: 8094,
+            category: "Cloud & Productivity",
+        },
+        STIRLINGPDF,
+        Check::DockerContainer("stirlingpdf"),
+    ),
+    (
+        RecipeInfo {
+            slug: "roundcube",
+            name: "Roundcube",
+            description: "Webmail for the panel's IMAP/SMTP server. Runs via Docker on port 8082.",
+            default_port: 8082,
+            category: "Cloud & Productivity",
+        },
+        ROUNDCUBE,
+        Check::DockerContainer("roundcube"),
+    ),
+    (
+        RecipeInfo {
+            slug: "gitea",
+            name: "Gitea",
+            description: "Lightweight self-hosted GitHub / Git repositories & CI/CD (HTTP 3012, SSH 2222).",
+            default_port: 3012,
+            category: "DevOps & Monitoring",
+        },
+        GITEA,
+        Check::DockerContainer("gitea"),
+    ),
+    (
+        RecipeInfo {
+            slug: "portainer",
+            name: "Portainer CE",
+            description: "Visual web UI to manage Docker containers, stacks, images & volumes.",
+            default_port: 9005,
+            category: "DevOps & Monitoring",
+        },
+        PORTAINER,
+        Check::DockerContainer("portainer"),
+    ),
+    (
+        RecipeInfo {
+            slug: "uptimekuma",
+            name: "Uptime Kuma",
+            description: "Real-time uptime monitor, alerting & public status pages.",
+            default_port: 3010,
+            category: "DevOps & Monitoring",
+        },
+        UPTIMEKUMA,
+        Check::DockerContainer("uptimekuma"),
+    ),
+    (
+        RecipeInfo {
+            slug: "grafana",
+            name: "Grafana",
+            description: "Observability dashboards for Prometheus, ClickHouse & SQL metrics.",
+            default_port: 3011,
+            category: "DevOps & Monitoring",
+        },
+        GRAFANA,
+        Check::DockerContainer("grafana"),
+    ),
+    (
+        RecipeInfo {
+            slug: "prometheus",
+            name: "Prometheus",
+            description: "High-performance time-series metrics collection & alerting engine.",
+            default_port: 9090,
+            category: "DevOps & Monitoring",
+        },
+        PROMETHEUS,
+        Check::DockerContainer("prometheus"),
+    ),
+    (
+        RecipeInfo {
+            slug: "dozzle",
+            name: "Dozzle",
+            description: "Lightweight real-time Docker container log viewer.",
+            default_port: 8091,
+            category: "DevOps & Monitoring",
+        },
+        DOZZLE,
+        Check::DockerContainer("dozzle"),
+    ),
+    (
+        RecipeInfo {
+            slug: "ittools",
+            name: "IT-Tools",
+            description: "Collection of 70+ handy developer & sysadmin utilities.",
+            default_port: 8093,
+            category: "DevOps & Monitoring",
+        },
+        ITTOOLS,
+        Check::DockerContainer("ittools"),
+    ),
+    (
+        RecipeInfo {
+            slug: "metabase",
+            name: "Metabase BI",
+            description: "Self-service business intelligence, charts & SQL analytics dashboards.",
+            default_port: 3013,
+            category: "Databases & Cache",
+        },
+        METABASE,
+        Check::DockerContainer("metabase"),
+    ),
+    (
+        RecipeInfo {
+            slug: "mongodb",
+            name: "MongoDB 7",
+            description: "High-scale NoSQL JSON document database (Docker, port 27017).",
+            default_port: 27017,
+            category: "Databases & Cache",
+        },
+        MONGODB,
+        Check::DockerContainer("mongodb"),
+    ),
+    (
+        RecipeInfo {
+            slug: "rabbitmq",
+            name: "RabbitMQ",
+            description: "Enterprise message broker & job queue with Management UI (15672 / 5672).",
+            default_port: 15672,
+            category: "Databases & Cache",
+        },
+        RABBITMQ,
+        Check::DockerContainer("rabbitmq"),
+    ),
+    (
+        RecipeInfo {
+            slug: "adminer",
+            name: "Adminer",
+            description: "Universal lightweight SQL UI for MariaDB, PostgreSQL & SQLite.",
+            default_port: 8095,
+            category: "Databases & Cache",
+        },
+        ADMINER,
+        Check::DockerContainer("adminer"),
+    ),
+    (
+        RecipeInfo {
             slug: "mariadb",
             name: "MariaDB",
             description: "Drop-in MySQL replacement (community fork). Listens on 3306.",
             default_port: 3306,
+            category: "Databases & Cache",
         },
         MARIADB,
         Check::SystemdUnit("mariadb"),
@@ -288,6 +1381,7 @@ const RECIPES: &[(RecipeInfo, Recipe, Check)] = &[
             name: "PostgreSQL",
             description: "Reliable relational database with rich SQL support. Listens on 5432.",
             default_port: 5432,
+            category: "Databases & Cache",
         },
         POSTGRESQL,
         Check::SystemdUnit("postgresql"),
@@ -296,8 +1390,9 @@ const RECIPES: &[(RecipeInfo, Recipe, Check)] = &[
         RecipeInfo {
             slug: "pgvector",
             name: "pgvector",
-            description: "PostgreSQL extension for vector similarity search / embeddings. Adds the `vector` type. Requires PostgreSQL — after installing, enable it per-database from the Postgres section.",
+            description: "PostgreSQL extension for vector similarity search / embeddings.",
             default_port: 0,
+            category: "Databases & Cache",
         },
         PGVECTOR,
         Check::PgExtension("vector"),
@@ -308,9 +1403,65 @@ const RECIPES: &[(RecipeInfo, Recipe, Check)] = &[
             name: "Redis",
             description: "In-memory key-value store. Listens on 6379.",
             default_port: 6379,
+            category: "Databases & Cache",
         },
         REDIS,
         Check::SystemdUnit("redis-server"),
+    ),
+    (
+        RecipeInfo {
+            slug: "valkey",
+            name: "Valkey",
+            description: "High-speed open-source Redis-compatible cache and queue engine (Docker, port 6380).",
+            default_port: 6380,
+            category: "Databases & Cache",
+        },
+        VALKEY,
+        Check::DockerContainer("valkey"),
+    ),
+    (
+        RecipeInfo {
+            slug: "memcached",
+            name: "Memcached",
+            description: "Multi-threaded in-memory object cache for high-concurrency session and query speed. Listens on 11211.",
+            default_port: 11211,
+            category: "Databases & Cache",
+        },
+        MEMCACHED,
+        Check::SystemdUnit("memcached"),
+    ),
+    (
+        RecipeInfo {
+            slug: "minio",
+            name: "MinIO S3",
+            description: "High-speed S3-compatible massive object storage for media, backups & datasets. API 9000, Console 9001.",
+            default_port: 9001,
+            category: "Databases & Cache",
+        },
+        MINIO,
+        Check::DockerContainer("minio"),
+    ),
+    (
+        RecipeInfo {
+            slug: "clickhouse",
+            name: "ClickHouse",
+            description: "Ultra-fast columnar OLAP database for billions of rows & real-time analytics. HTTP 8123, Native 9004.",
+            default_port: 8123,
+            category: "Databases & Cache",
+        },
+        CLICKHOUSE,
+        Check::DockerContainer("clickhouse"),
+    ),
+    (
+        RecipeInfo {
+            slug: "meilisearch",
+            name: "Meilisearch",
+            description: "Sub-50ms full-text search engine for millions of products & records (Docker, port 7700).",
+            default_port: 7700,
+            category: "Databases & Cache",
+        },
+        MEILISEARCH,
+        Check::DockerContainer("meilisearch"),
     ),
     (
         RecipeInfo {
@@ -318,36 +1469,18 @@ const RECIPES: &[(RecipeInfo, Recipe, Check)] = &[
             name: "Qdrant",
             description: "Vector database (runs via Docker). REST 6333, gRPC 6334.",
             default_port: 6333,
+            category: "Databases & Cache",
         },
         QDRANT,
         Check::DockerContainer("qdrant"),
     ),
     (
         RecipeInfo {
-            slug: "docker",
-            name: "Docker",
-            description: "Container runtime. Required for containerized apps and services.",
-            default_port: 0,
-        },
-        DOCKER,
-        Check::SystemdUnit("docker"),
-    ),
-    (
-        RecipeInfo {
-            slug: "nginx",
-            name: "Nginx",
-            description: "HTTP server and reverse proxy. Listens on 80/443.",
-            default_port: 80,
-        },
-        NGINX,
-        Check::SystemdUnit("nginx"),
-    ),
-    (
-        RecipeInfo {
             slug: "pgadmin",
             name: "pgAdmin",
-            description: "Web UI for PostgreSQL. Runs via Docker on port 5050. Login: admin@example.com and the password shown in its install task.",
+            description: "Web UI for PostgreSQL. Runs via Docker on port 5050.",
             default_port: 5050,
+            category: "Databases & Cache",
         },
         PGADMIN,
         Check::DockerContainer("pgadmin"),
@@ -358,36 +1491,51 @@ const RECIPES: &[(RecipeInfo, Recipe, Check)] = &[
             name: "phpMyAdmin",
             description: "Web UI for MariaDB / MySQL. Runs via Docker on port 8081.",
             default_port: 8081,
+            category: "Databases & Cache",
         },
         PHPMYADMIN,
         Check::DockerContainer("phpmyadmin"),
     ),
     (
         RecipeInfo {
-            slug: "roundcube",
-            name: "Roundcube",
-            description: "Webmail for the panel's IMAP/SMTP server. Runs via Docker on port 8082. At login enter your mail server (e.g. mail.<domain>), email, and password.",
-            default_port: 8082,
+            slug: "docker",
+            name: "Docker",
+            description: "Container runtime. Required for containerized apps and services.",
+            default_port: 0,
+            category: "Infrastructure",
         },
-        ROUNDCUBE,
-        Check::DockerContainer("roundcube"),
+        DOCKER,
+        Check::SystemdUnit("docker"),
     ),
     (
         RecipeInfo {
-            slug: "n8n",
-            name: "n8n",
-            description: "Workflow automation with a visual editor and 400+ integrations. Runs via Docker on port 5678.",
-            default_port: 5678,
+            slug: "nginx",
+            name: "Nginx",
+            description: "HTTP server and reverse proxy. Listens on 80/443.",
+            default_port: 80,
+            category: "Infrastructure",
         },
-        N8N,
-        Check::DockerContainer("n8n"),
+        NGINX,
+        Check::SystemdUnit("nginx"),
+    ),
+    (
+        RecipeInfo {
+            slug: "k3s",
+            name: "K3s Cluster",
+            description: "Lightweight CNCF Kubernetes control plane for multi-server horizontal scaling (API port 6443).",
+            default_port: 6443,
+            category: "Infrastructure",
+        },
+        K3S,
+        Check::SystemdUnit("k3s"),
     ),
     (
         RecipeInfo {
             slug: "tailscale",
             name: "Tailscale",
-            description: "Private network between this server and your other devices (WireGuard). After installing, log in from this card.",
+            description: "Private network between this server and your other devices (WireGuard).",
             default_port: 0,
+            category: "Infrastructure",
         },
         TAILSCALE,
         Check::Tailscale,
@@ -398,43 +1546,347 @@ struct DockerService {
     container_name: &'static str,
     host_port: u16,
     container_port: u16,
+    extra_ports: &'static [(u16, u16)],
     image: &'static str,
     extra_args: &'static [&'static str],
+    cmd_args: &'static [&'static str],
 }
 
 const PGADMIN_SERVICE: DockerService = DockerService {
     container_name: "pgadmin",
     host_port: 5050,
     container_port: 80,
+    extra_ports: &[],
     image: "dpage/pgadmin4",
-    // PGADMIN_DEFAULT_EMAIL and PGADMIN_DEFAULT_PASSWORD are carried over
-    // from the container that is replaced (set_bind): the password is the
-    // one its install generated, or `changeme` on an older install.
     extra_args: &[
         "--add-host=host.docker.internal:host-gateway",
         "-v",
         "pgadmin_data:/var/lib/pgadmin",
     ],
+    cmd_args: &[],
 };
 
 const PHPMYADMIN_SERVICE: DockerService = DockerService {
     container_name: "phpmyadmin",
     host_port: 8081,
     container_port: 80,
+    extra_ports: &[],
     image: "phpmyadmin/phpmyadmin",
     extra_args: &[
         "-e",
         "PMA_HOST=host.docker.internal",
         "--add-host=host.docker.internal:host-gateway",
     ],
+    cmd_args: &[],
 };
 
 const N8N_SERVICE: DockerService = DockerService {
     container_name: "n8n",
     host_port: 5678,
     container_port: 5678,
+    extra_ports: &[],
     image: "n8nio/n8n",
     extra_args: &["-v", "n8n_data:/home/node/.n8n"],
+    cmd_args: &[],
+};
+
+const MINIO_SERVICE: DockerService = DockerService {
+    container_name: "minio",
+    host_port: 9001,
+    container_port: 9001,
+    extra_ports: &[(9000, 9000)],
+    image: "quay.io/minio/minio",
+    extra_args: &["-v", "minio_data:/data"],
+    cmd_args: &["server", "/data", "--console-address", ":9001"],
+};
+
+const MEILISEARCH_SERVICE: DockerService = DockerService {
+    container_name: "meilisearch",
+    host_port: 7700,
+    container_port: 7700,
+    extra_ports: &[],
+    image: "getmeili/meilisearch:latest",
+    extra_args: &["-e", "MEILI_ENV=production", "-v", "meili_data:/meili_data"],
+    cmd_args: &[],
+};
+
+const WORDPRESS_SERVICE: DockerService = DockerService {
+    container_name: "wordpress",
+    host_port: 8092,
+    container_port: 80,
+    extra_ports: &[],
+    image: "wordpress:latest",
+    extra_args: &[
+        "--add-host=host.docker.internal:host-gateway",
+        "-v",
+        "wordpress_data:/var/www/html",
+    ],
+    cmd_args: &[],
+};
+
+const GHOST_SERVICE: DockerService = DockerService {
+    container_name: "ghost",
+    host_port: 2368,
+    container_port: 2368,
+    extra_ports: &[],
+    image: "ghost:5-alpine",
+    extra_args: &[
+        "-e",
+        "NODE_ENV=production",
+        "-e",
+        "database__client=sqlite3",
+        "-e",
+        "database__connection__filename=/var/lib/ghost/content/data/ghost.db",
+        "-e",
+        "url=http://localhost:2368",
+        "-v",
+        "ghost_data:/var/lib/ghost/content",
+    ],
+    cmd_args: &[],
+};
+
+const DIRECTUS_SERVICE: DockerService = DockerService {
+    container_name: "directus",
+    host_port: 8055,
+    container_port: 8055,
+    extra_ports: &[],
+    image: "directus/directus:latest",
+    extra_args: &[
+        "-e",
+        "DB_CLIENT=sqlite3",
+        "-e",
+        "DB_FILENAME=/directus/database/data.db",
+        "-e",
+        "ADMIN_EMAIL=admin@example.com",
+        "-v",
+        "directus_db:/directus/database",
+        "-v",
+        "directus_uploads:/directus/uploads",
+    ],
+    cmd_args: &[],
+};
+
+const NOCODB_SERVICE: DockerService = DockerService {
+    container_name: "nocodb",
+    host_port: 8086,
+    container_port: 8080,
+    extra_ports: &[],
+    image: "nocodb/nocodb:latest",
+    extra_args: &["-v", "nocodb_data:/usr/app/data"],
+    cmd_args: &[],
+};
+
+const NEXTCLOUD_SERVICE: DockerService = DockerService {
+    container_name: "nextcloud",
+    host_port: 8087,
+    container_port: 80,
+    extra_ports: &[],
+    image: "nextcloud:latest",
+    extra_args: &["-v", "nextcloud_data:/var/www/html"],
+    cmd_args: &[],
+};
+
+const GITEA_SERVICE: DockerService = DockerService {
+    container_name: "gitea",
+    host_port: 3012,
+    container_port: 3000,
+    extra_ports: &[(2222, 22)],
+    image: "gitea/gitea:latest",
+    extra_args: &["-v", "gitea_data:/data"],
+    cmd_args: &[],
+};
+
+const PORTAINER_SERVICE: DockerService = DockerService {
+    container_name: "portainer",
+    host_port: 9005,
+    container_port: 9000,
+    extra_ports: &[],
+    image: "portainer/portainer-ce:latest",
+    extra_args: &[
+        "-v",
+        "/var/run/docker.sock:/var/run/docker.sock",
+        "-v",
+        "portainer_data:/data",
+    ],
+    cmd_args: &[],
+};
+
+const UPTIMEKUMA_SERVICE: DockerService = DockerService {
+    container_name: "uptimekuma",
+    host_port: 3010,
+    container_port: 3001,
+    extra_ports: &[],
+    image: "louislam/uptime-kuma:1",
+    extra_args: &["-v", "uptimekuma_data:/app/data"],
+    cmd_args: &[],
+};
+
+const GRAFANA_SERVICE: DockerService = DockerService {
+    container_name: "grafana",
+    host_port: 3011,
+    container_port: 3000,
+    extra_ports: &[],
+    image: "grafana/grafana:latest",
+    extra_args: &["-v", "grafana_data:/var/lib/grafana"],
+    cmd_args: &[],
+};
+
+const PROMETHEUS_SERVICE: DockerService = DockerService {
+    container_name: "prometheus",
+    host_port: 9090,
+    container_port: 9090,
+    extra_ports: &[],
+    image: "prom/prometheus:latest",
+    extra_args: &["-v", "prometheus_data:/prometheus"],
+    cmd_args: &[],
+};
+
+const DOZZLE_SERVICE: DockerService = DockerService {
+    container_name: "dozzle",
+    host_port: 8091,
+    container_port: 8080,
+    extra_ports: &[],
+    image: "amir20/dozzle:latest",
+    extra_args: &["-v", "/var/run/docker.sock:/var/run/docker.sock"],
+    cmd_args: &[],
+};
+
+const METABASE_SERVICE: DockerService = DockerService {
+    container_name: "metabase",
+    host_port: 3013,
+    container_port: 3000,
+    extra_ports: &[],
+    image: "metabase/metabase:latest",
+    extra_args: &[
+        "--add-host=host.docker.internal:host-gateway",
+        "-e",
+        "MB_DB_FILE=/metabase-data/metabase.db",
+        "-v",
+        "metabase_data:/metabase-data",
+    ],
+    cmd_args: &[],
+};
+
+const OPENWEBUI_SERVICE: DockerService = DockerService {
+    container_name: "openwebui",
+    host_port: 3014,
+    container_port: 8080,
+    extra_ports: &[],
+    image: "ghcr.io/open-webui/open-webui:main",
+    extra_args: &[
+        "--add-host=host.docker.internal:host-gateway",
+        "-e",
+        "OLLAMA_BASE_URL=http://host.docker.internal:11434",
+        "-v",
+        "openwebui_data:/app/backend/data",
+    ],
+    cmd_args: &[],
+};
+
+const FLOWISE_SERVICE: DockerService = DockerService {
+    container_name: "flowise",
+    host_port: 3015,
+    container_port: 3000,
+    extra_ports: &[],
+    image: "flowiseai/flowise:latest",
+    extra_args: &[
+        "--add-host=host.docker.internal:host-gateway",
+        "-v",
+        "flowise_data:/root/.flowise",
+    ],
+    cmd_args: &[],
+};
+
+const VAULTWARDEN_SERVICE: DockerService = DockerService {
+    container_name: "vaultwarden",
+    host_port: 8088,
+    container_port: 80,
+    extra_ports: &[],
+    image: "vaultwarden/server:latest",
+    extra_args: &["-v", "vaultwarden_data:/data"],
+    cmd_args: &[],
+};
+
+const FILEBROWSER_SERVICE: DockerService = DockerService {
+    container_name: "filebrowser",
+    host_port: 8089,
+    container_port: 80,
+    extra_ports: &[],
+    image: "filebrowser/filebrowser:latest",
+    extra_args: &[
+        "-v",
+        "filebrowser_srv:/srv",
+        "-v",
+        "filebrowser_db:/database",
+    ],
+    cmd_args: &[],
+};
+
+const JELLYFIN_SERVICE: DockerService = DockerService {
+    container_name: "jellyfin",
+    host_port: 8096,
+    container_port: 8096,
+    extra_ports: &[],
+    image: "jellyfin/jellyfin:latest",
+    extra_args: &[
+        "-v",
+        "jellyfin_config:/config",
+        "-v",
+        "jellyfin_cache:/cache",
+        "-v",
+        "jellyfin_media:/media",
+    ],
+    cmd_args: &[],
+};
+
+const MEMOS_SERVICE: DockerService = DockerService {
+    container_name: "memos",
+    host_port: 5230,
+    container_port: 5230,
+    extra_ports: &[],
+    image: "neosmemo/memos:stable",
+    extra_args: &["-v", "memos_data:/var/opt/memos"],
+    cmd_args: &[],
+};
+
+const RABBITMQ_SERVICE: DockerService = DockerService {
+    container_name: "rabbitmq",
+    host_port: 15672,
+    container_port: 15672,
+    extra_ports: &[(5672, 5672)],
+    image: "rabbitmq:3-management",
+    extra_args: &["-v", "rabbitmq_data:/var/lib/rabbitmq"],
+    cmd_args: &[],
+};
+
+const ADMINER_SERVICE: DockerService = DockerService {
+    container_name: "adminer",
+    host_port: 8095,
+    container_port: 8080,
+    extra_ports: &[],
+    image: "adminer:latest",
+    extra_args: &["--add-host=host.docker.internal:host-gateway"],
+    cmd_args: &[],
+};
+
+const ITTOOLS_SERVICE: DockerService = DockerService {
+    container_name: "ittools",
+    host_port: 8093,
+    container_port: 80,
+    extra_ports: &[],
+    image: "corentinth/it-tools:latest",
+    extra_args: &[],
+    cmd_args: &[],
+};
+
+const STIRLINGPDF_SERVICE: DockerService = DockerService {
+    container_name: "stirlingpdf",
+    host_port: 8094,
+    container_port: 8080,
+    extra_ports: &[],
+    image: "stirlingtools/stirling-pdf:latest",
+    extra_args: &["-v", "stirlingpdf_data:/configs"],
+    cmd_args: &[],
 };
 
 // Roundcube is intentionally NOT in web_ui_service: its container env vars
@@ -447,6 +1899,30 @@ fn web_ui_service(slug: &str) -> Option<&'static DockerService> {
         "pgadmin" => Some(&PGADMIN_SERVICE),
         "phpmyadmin" => Some(&PHPMYADMIN_SERVICE),
         "n8n" => Some(&N8N_SERVICE),
+        "minio" => Some(&MINIO_SERVICE),
+        "meilisearch" => Some(&MEILISEARCH_SERVICE),
+        "wordpress" => Some(&WORDPRESS_SERVICE),
+        "ghost" => Some(&GHOST_SERVICE),
+        "directus" => Some(&DIRECTUS_SERVICE),
+        "nocodb" => Some(&NOCODB_SERVICE),
+        "nextcloud" => Some(&NEXTCLOUD_SERVICE),
+        "gitea" => Some(&GITEA_SERVICE),
+        "portainer" => Some(&PORTAINER_SERVICE),
+        "uptimekuma" => Some(&UPTIMEKUMA_SERVICE),
+        "grafana" => Some(&GRAFANA_SERVICE),
+        "prometheus" => Some(&PROMETHEUS_SERVICE),
+        "dozzle" => Some(&DOZZLE_SERVICE),
+        "metabase" => Some(&METABASE_SERVICE),
+        "openwebui" => Some(&OPENWEBUI_SERVICE),
+        "flowise" => Some(&FLOWISE_SERVICE),
+        "vaultwarden" => Some(&VAULTWARDEN_SERVICE),
+        "filebrowser" => Some(&FILEBROWSER_SERVICE),
+        "jellyfin" => Some(&JELLYFIN_SERVICE),
+        "memos" => Some(&MEMOS_SERVICE),
+        "rabbitmq" => Some(&RABBITMQ_SERVICE),
+        "adminer" => Some(&ADMINER_SERVICE),
+        "ittools" => Some(&ITTOOLS_SERVICE),
+        "stirlingpdf" => Some(&STIRLINGPDF_SERVICE),
         _ => None,
     }
 }
@@ -951,6 +2427,7 @@ pub async fn list(Query(params): Query<ListParams>) -> Json<Vec<RecipeListItem>>
             name: info.name,
             description: info.description,
             default_port: info.default_port,
+            category: info.category,
             installed,
             web_ui,
             bind,
@@ -1005,6 +2482,7 @@ pub async fn run(
     // phpmyadmin hook can look up matching /domains routing slots without
     // touching the request-handler `state`.
     let panel_db = state.panel_db.clone();
+    let mariadb = state.mariadb.clone();
 
     tokio::spawn(async move {
         task.start();
@@ -1025,21 +2503,83 @@ pub async fn run(
             return;
         }
 
+        if slug_owned == "k3s" {
+            install_k3s_dynamic(task).await;
+            return;
+        }
+
+        if slug_owned == "wordpress" {
+            install_wordpress_dynamic(mariadb, task).await;
+            return;
+        }
+
         // pgAdmin's first password (see PGADMIN_PASSWORD_ARG). Looked at
         // before the steps create the volume: a volume that already has a
         // pgAdmin in it keeps that pgAdmin's login.
         let pgadmin_password = (slug_owned == "pgadmin").then(random_password);
         let pgadmin_keeps_its_login = pgadmin_password.is_some() && pgadmin_data_has_a_login().await;
+        let minio_password = (slug_owned == "minio").then(random_password);
+        let meili_key = (slug_owned == "meilisearch").then(random_password);
+        let directus_key = (slug_owned == "directus").then(random_password);
+        let directus_secret = (slug_owned == "directus").then(random_password);
+        let directus_admin_pw = (slug_owned == "directus").then(random_password);
 
         for (idx, step) in recipe.iter().enumerate() {
             let cmd = step[0];
-            let args: Vec<String> = step[1..]
+            let mut args: Vec<String> = step[1..]
                 .iter()
-                .map(|arg| match &pgadmin_password {
-                    Some(password) if *arg == PGADMIN_PASSWORD_ARG => format!("{PGADMIN_PASSWORD_ARG}{password}"),
-                    _ => arg.to_string(),
+                .map(|arg| {
+                    if let Some(password) = &pgadmin_password {
+                        if *arg == PGADMIN_PASSWORD_ARG {
+                            return format!("{PGADMIN_PASSWORD_ARG}{password}");
+                        }
+                    }
+                    if let Some(password) = &minio_password {
+                        if *arg == MINIO_PASSWORD_ARG {
+                            return format!("{MINIO_PASSWORD_ARG}{password}");
+                        }
+                    }
+                    if let Some(key) = &meili_key {
+                        if *arg == MEILI_KEY_ARG {
+                            return format!("{MEILI_KEY_ARG}{key}");
+                        }
+                    }
+                    if let Some(key) = &directus_key {
+                        if *arg == DIRECTUS_KEY_ARG {
+                            return format!("{DIRECTUS_KEY_ARG}{key}");
+                        }
+                    }
+                    if let Some(secret) = &directus_secret {
+                        if *arg == DIRECTUS_SECRET_ARG {
+                            return format!("{DIRECTUS_SECRET_ARG}{secret}");
+                        }
+                    }
+                    if let Some(pw) = &directus_admin_pw {
+                        if *arg == DIRECTUS_ADMIN_PW_ARG {
+                            return format!("{DIRECTUS_ADMIN_PW_ARG}{pw}");
+                        }
+                    }
+                    arg.to_string()
                 })
                 .collect();
+            if cmd == "apt-get" {
+                let sub = args.first().map(String::as_str);
+                if sub == Some("update") {
+                    args.splice(1..1, ["-o".to_string(), "DPkg::Lock::Timeout=120".to_string()]);
+                } else if sub == Some("install") {
+                    args.splice(
+                        1..1,
+                        [
+                            "-o".to_string(),
+                            "DPkg::Lock::Timeout=120".to_string(),
+                            "-o".to_string(),
+                            "Dpkg::Options::=--force-confdef".to_string(),
+                            "-o".to_string(),
+                            "Dpkg::Options::=--force-confold".to_string(),
+                        ],
+                    );
+                }
+            }
             let shown: Vec<&str> = args.iter().map(|a| loggable_arg(a)).collect();
             task.log(format!("[{}/{}] $ {} {}", idx + 1, recipe.len(), cmd, shown.join(" ")));
 
@@ -1151,11 +2691,162 @@ pub async fn run(
             }
         }
 
+        if let Some(password) = &minio_password {
+            task.log(format!("MinIO S3 Console/API login: user=paixadmin, password={password}"));
+            task.log("API endpoint: http://127.0.0.1:9000 · Web Console: http://127.0.0.1:9001".to_string());
+        }
+
+        if let Some(key) = &meili_key {
+            task.log(format!("Meilisearch master key: {key}"));
+            task.log("API/Dashboard endpoint: http://127.0.0.1:7700 (pass Authorization: Bearer <master-key>)".to_string());
+        }
+
+        if let Some(pw) = &directus_admin_pw {
+            task.log(format!("Directus initial admin login: admin@example.com, password: {pw}"));
+            task.log("URL: http://127.0.0.1:8055 (Route a domain in /domains for HTTPS)".to_string());
+        }
+
         task.log(format!("{display_name} installed successfully"));
         task.finish(true);
     });
 
     Ok(Json(TaskAccepted { task_id }))
+}
+
+async fn install_wordpress_dynamic(
+    mariadb: crate::db::MariaDb,
+    task: crate::ipc::tasks::TaskHandle,
+) {
+    use mysql_async::prelude::Queryable;
+
+    let prep: &[&[&str]] = &[
+        &["apt-get", "update"],
+        INSTALL_DOCKER,
+        &["systemctl", "enable", "docker"],
+        &["systemctl", "start", "docker"],
+        &["docker", "volume", "create", "wordpress_data"],
+    ];
+    let total = prep.len() + 2;
+    for (idx, step) in prep.iter().enumerate() {
+        let cmd = step[0];
+        let mut args: Vec<String> = step[1..].iter().map(|s| (*s).to_string()).collect();
+        if cmd == "apt-get" && args.first().map(String::as_str) == Some("update") {
+            args.splice(1..1, ["-o".to_string(), "DPkg::Lock::Timeout=120".to_string()]);
+        }
+        task.log(format!("[{}/{}] $ {} {}", idx + 1, total, cmd, args.join(" ")));
+        let res = exec::run_streaming_envs(
+            cmd,
+            args.iter(),
+            [("DEBIAN_FRONTEND", "noninteractive")],
+            |line: &str| task.log(line.to_string()),
+        )
+        .await;
+        match res {
+            Ok(0) => {}
+            Ok(code) => {
+                task.log(format!("step exited with code {code}"));
+                task.finish(false);
+                return;
+            }
+            Err(e) => {
+                task.log(format!("step error: {e}"));
+                task.finish(false);
+                return;
+            }
+        }
+    }
+
+    ensure_mariadb_docker_bridge_bind(&task).await;
+
+    let wp_password = random_password();
+    task.log(format!(
+        "[{}/{}] provisioning MariaDB database `wordpress_app` and user `wp_app`@`172.17.%`",
+        prep.len() + 1,
+        total
+    ));
+    let db_res: Result<(), String> = async {
+        let mut conn = mariadb
+            .pool()
+            .get_conn()
+            .await
+            .map_err(|e| format!("mariadb connect: {e}"))?;
+        conn.query_drop("CREATE DATABASE IF NOT EXISTS `wordpress_app`")
+            .await
+            .map_err(|e| format!("create database: {e}"))?;
+        conn.exec_drop(
+            "CREATE USER IF NOT EXISTS 'wp_app'@'172.17.%' IDENTIFIED BY ?",
+            (wp_password.as_str(),),
+        )
+        .await
+        .map_err(|e| format!("create user: {e}"))?;
+        conn.exec_drop(
+            "ALTER USER 'wp_app'@'172.17.%' IDENTIFIED BY ?",
+            (wp_password.as_str(),),
+        )
+        .await
+        .map_err(|e| format!("set password: {e}"))?;
+        conn.query_drop("GRANT ALL PRIVILEGES ON `wordpress_app`.* TO 'wp_app'@'172.17.%'")
+            .await
+            .map_err(|e| format!("grant privileges: {e}"))?;
+        conn.query_drop("FLUSH PRIVILEGES")
+            .await
+            .map_err(|e| format!("flush privileges: {e}"))?;
+        Ok(())
+    }
+    .await;
+
+    if let Err(err) = db_res {
+        task.log(format!("MariaDB provisioning failed: {err}"));
+        task.finish(false);
+        return;
+    }
+
+    let db_pw_env = format!("WORDPRESS_DB_PASSWORD={wp_password}");
+    let args = [
+        "run",
+        "-d",
+        "--name",
+        "wordpress",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:8092:80",
+        "--add-host=host.docker.internal:host-gateway",
+        "-e",
+        "WORDPRESS_DB_HOST=host.docker.internal:3306",
+        "-e",
+        "WORDPRESS_DB_USER=wp_app",
+        "-e",
+        db_pw_env.as_str(),
+        "-e",
+        "WORDPRESS_DB_NAME=wordpress_app",
+        "-v",
+        "wordpress_data:/var/www/html",
+        "wordpress:latest",
+    ];
+    let shown: Vec<&str> = args.iter().map(|a| loggable_arg(a)).collect();
+    task.log(format!("[{}/{}] $ docker {}", total, total, shown.join(" ")));
+    match exec::run_streaming("docker", args.iter().copied(), |l| task.log(l.to_string())).await {
+        Ok(0) => {
+            task.log("WordPress installed on 127.0.0.1:8092 (DB: wordpress_app, user: wp_app).".to_string());
+            task.log("Route a domain to port 8092 in /domains, then finish the 1-minute WordPress site setup in your browser.".to_string());
+            task.finish(true);
+        }
+        Ok(code) => {
+            task.log(format!("docker run exited with code {code}"));
+            remove_unstarted_container(Check::DockerContainer("wordpress"), &task).await;
+            task.finish(false);
+        }
+        Err(e) => {
+            task.log(format!("docker run error: {e}"));
+            remove_unstarted_container(Check::DockerContainer("wordpress"), &task).await;
+            task.finish(false);
+        }
+    }
 }
 
 /// `docker run` creates the container before it starts it. When the start
@@ -1371,8 +3062,19 @@ async fn install_pgvector_dynamic(task: crate::ipc::tasks::TaskHandle) {
 
     let package = format!("postgresql-{version}-pgvector");
     let steps: [Vec<&str>; 2] = [
-        vec!["apt-get", "update"],
-        vec!["apt-get", "install", "-y", package.as_str()],
+        vec!["apt-get", "update", "-o", "DPkg::Lock::Timeout=120"],
+        vec![
+            "apt-get",
+            "install",
+            "-y",
+            "-o",
+            "DPkg::Lock::Timeout=120",
+            "-o",
+            "Dpkg::Options::=--force-confdef",
+            "-o",
+            "Dpkg::Options::=--force-confold",
+            package.as_str(),
+        ],
     ];
     let total = steps.len();
     for (idx, step) in steps.iter().enumerate() {
@@ -1412,6 +3114,44 @@ async fn install_pgvector_dynamic(task: crate::ipc::tasks::TaskHandle) {
             .to_string(),
     );
     task.finish(true);
+}
+
+/// K3s lightweight CNCF Kubernetes install.
+/// Disables Traefik ingress (`--disable traefik`) so ports 80/443 stay cleanly
+/// under Paix Panel's Nginx reverse proxy + Let's Encrypt TLS automation.
+async fn install_k3s_dynamic(task: crate::ipc::tasks::TaskHandle) {
+    task.log("[1/2] Ensuring curl is available".to_string());
+    let _ = exec::run_streaming_envs(
+        "sh",
+        ["-c", "command -v curl >/dev/null 2>&1 || (apt-get update -o DPkg::Lock::Timeout=120 && apt-get install -y -o DPkg::Lock::Timeout=120 curl)"],
+        [("DEBIAN_FRONTEND", "noninteractive")],
+        |l| task.log(l.to_string()),
+    )
+    .await;
+
+    task.log("[2/2] Installing K3s (--disable traefik so Nginx stays on 80/443)".to_string());
+    let res = exec::run_streaming_envs(
+        "sh",
+        ["-c", "curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC=\"server --disable traefik --write-kubeconfig-mode 644\" sh -"],
+        [("DEBIAN_FRONTEND", "noninteractive")],
+        |l| task.log(l.to_string()),
+    )
+    .await;
+    match res {
+        Ok(0) => {
+            task.log("K3s cluster control plane installed (kubeconfig: /etc/rancher/k3s/k3s.yaml)".to_string());
+            task.log("Join additional worker nodes via My Networks WireGuard IP using /var/lib/rancher/k3s/server/node-token".to_string());
+            task.finish(true);
+        }
+        Ok(code) => {
+            task.log(format!("K3s installer exited with code {code}"));
+            task.finish(false);
+        }
+        Err(e) => {
+            task.log(format!("K3s installer error: {e}"));
+            task.finish(false);
+        }
+    }
 }
 
 // ─── Roundcube filters and Out of Office (managesieve plugin) ─────────
@@ -2289,6 +4029,15 @@ pub async fn set_bind(
         "n8n" => &["N8N_HOST", "N8N_PROTOCOL", "WEBHOOK_URL", "N8N_EDITOR_BASE_URL"],
         // The first login, as this container was installed with it.
         "pgadmin" => &["PGADMIN_DEFAULT_EMAIL", "PGADMIN_DEFAULT_PASSWORD"],
+        "minio" => &["MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD"],
+        "meilisearch" => &["MEILI_MASTER_KEY"],
+        "directus" => &["KEY", "SECRET", "ADMIN_PASSWORD"],
+        "wordpress" => &[
+            "WORDPRESS_DB_HOST",
+            "WORDPRESS_DB_USER",
+            "WORDPRESS_DB_PASSWORD",
+            "WORDPRESS_DB_NAME",
+        ],
         _ => &[],
     };
     let mut preserved_env: Vec<String> = Vec::new();
@@ -2334,6 +4083,11 @@ pub async fn set_bind(
         .await;
 
         let port_arg = format!("{}:{}:{}", bind, svc.host_port, svc.container_port);
+        let extra_port_args: Vec<String> = svc
+            .extra_ports
+            .iter()
+            .map(|(hp, cp)| format!("{bind}:{hp}:{cp}"))
+            .collect();
         let mut docker_args: Vec<&str> = vec![
             "run",
             "-d",
@@ -2348,6 +4102,10 @@ pub async fn set_bind(
             "-p",
             port_arg.as_str(),
         ];
+        for p in &extra_port_args {
+            docker_args.push("-p");
+            docker_args.push(p.as_str());
+        }
         docker_args.extend_from_slice(svc.extra_args);
         // Re-inject preserved env after extra_args, so it wins over defaults.
         for env in &preserved_env {
@@ -2356,6 +4114,7 @@ pub async fn set_bind(
             docker_args.push(env.as_str());
         }
         docker_args.push(svc.image);
+        docker_args.extend_from_slice(svc.cmd_args);
         if let Some(password) = &pgadmin_new_password {
             task.log(format!(
                 "there was no pgAdmin container to take the login from: admin@example.com, new password: {password}"
@@ -2383,22 +4142,28 @@ pub async fn set_bind(
             }
         }
 
-        if bind == "0.0.0.0" {
-            task.log(format!("$ ufw allow {}/tcp", host_port));
-            let _ = exec::run_streaming(
-                "ufw",
-                ["allow", &format!("{}/tcp", host_port)],
-                |l| task.log(l.to_string()),
-            )
-            .await;
-        } else {
-            task.log(format!("$ ufw delete allow {}/tcp", host_port));
-            let _ = exec::run_streaming(
-                "ufw",
-                ["delete", "allow", &format!("{}/tcp", host_port)],
-                |l| task.log(l.to_string()),
-            )
-            .await;
+        let mut ufw_ports = vec![host_port];
+        for (hp, _) in svc.extra_ports {
+            ufw_ports.push(*hp);
+        }
+        for p in ufw_ports {
+            if bind == "0.0.0.0" {
+                task.log(format!("$ ufw allow {}/tcp", p));
+                let _ = exec::run_streaming(
+                    "ufw",
+                    ["allow", &format!("{}/tcp", p)],
+                    |l| task.log(l.to_string()),
+                )
+                .await;
+            } else {
+                task.log(format!("$ ufw delete allow {}/tcp", p));
+                let _ = exec::run_streaming(
+                    "ufw",
+                    ["delete", "allow", &format!("{}/tcp", p)],
+                    |l| task.log(l.to_string()),
+                )
+                .await;
+            }
         }
 
         // Self-heal MariaDB bridge bind whenever phpMyAdmin is touched.
@@ -2560,7 +4325,7 @@ const PG_HBA_BRIDGE_LINE: &str = "host    all             all             172.17
 /// Debian/Ubuntu layout uses one directory per major version (e.g.
 /// `/etc/postgresql/16/main/`). We pick the highest numeric directory
 /// that has a `main/postgresql.conf` inside.
-async fn detect_postgres_version() -> Option<String> {
+pub(crate) async fn detect_postgres_version() -> Option<String> {
     let mut rd = tokio::fs::read_dir("/etc/postgresql").await.ok()?;
     let mut versions: Vec<u32> = Vec::new();
     while let Ok(Some(entry)) = rd.next_entry().await {
@@ -2621,7 +4386,7 @@ fn chown_postgres_config(task: &crate::ipc::tasks::TaskHandle, path: &str) {
 /// umbrella unit returns success from `systemctl restart` even when the real
 /// `postgresql@<ver>-main` unit failed to start (e.g. an unreadable
 /// pg_hba.conf), so the restart exit code alone can't be trusted.
-async fn postgres_is_ready() -> bool {
+pub(crate) async fn postgres_is_ready() -> bool {
     for attempt in 0..10 {
         if exec::run("pg_isready", ["-q"]).await.is_ok() {
             return true;

@@ -101,6 +101,8 @@ export async function quickInstallAction(
       target: slug,
       result: "ok",
     });
+    revalidatePath("/apps");
+    revalidatePath("/scale");
     return { ok: true, data: { taskId: accepted.task_id, slug } };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -363,6 +365,7 @@ export async function setBindAction(
       result: "ok",
     });
     revalidatePath("/apps");
+    revalidatePath("/scale");
     return { ok: true, data: { taskId: accepted.task_id, slug, bind } };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);

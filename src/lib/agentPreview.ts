@@ -21,6 +21,8 @@ import type {
   PgRole,
   QuickInstallRecipe,
   RecordRow,
+  ScaleProfileId,
+  ScaleStatus,
   SecurityOverview,
   ServiceRow,
   SiteListEntry,
@@ -77,6 +79,7 @@ type PreviewState = {
   sshLogs: SshLogEvent[];
   sshSessions: SshActiveSession[];
   manualBannedIps: string[];
+  scaleEnabled: Record<ScaleProfileId, boolean>;
 };
 
 const g = globalThis as unknown as { __boltPreviewState?: PreviewState };
@@ -318,14 +321,48 @@ function getState(): PreviewState {
       },
     ],
     quickInstall: [
-      { slug: "docker", name: "Docker", description: "Container runtime for Docker apps and one-click tools.", default_port: 2375, installed: true, web_ui: false, bind: null, update_available: null },
-      { slug: "redis", name: "Redis", description: "In-memory cache and queue store on 127.0.0.1:6379.", default_port: 6379, installed: true, web_ui: false, bind: "127.0.0.1", update_available: null },
-      { slug: "roundcube", name: "Roundcube Webmail", description: "Browser webmail client wired to Postfix and Dovecot.", default_port: 8085, installed: true, web_ui: true, bind: "127.0.0.1", update_available: null },
-      { slug: "phpmyadmin", name: "phpMyAdmin", description: "Web UI for MariaDB databases and users.", default_port: 8081, installed: false, web_ui: true, bind: null, update_available: null },
-      { slug: "pgadmin", name: "pgAdmin 4", description: "Web UI for PostgreSQL databases and roles.", default_port: 8082, installed: false, web_ui: true, bind: null, update_available: null },
-      { slug: "n8n", name: "n8n", description: "Workflow automation engine with webhook routing.", default_port: 5678, installed: false, web_ui: true, bind: null, update_available: false },
-      { slug: "qdrant", name: "Qdrant", description: "Vector database for semantic search and RAG.", default_port: 6333, installed: false, web_ui: true, bind: null, update_available: null },
-      { slug: "tailscale", name: "Tailscale", description: "Zero-config private mesh VPN for server access.", default_port: 41641, installed: false, web_ui: false, bind: null, update_available: null },
+      { slug: "wordpress", name: "WordPress", description: "World's #1 CMS, blogs & WooCommerce e-commerce store. Auto-wired to host MariaDB.", default_port: 8092, category: "Web & CMS", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "ghost", name: "Ghost CMS", description: "Fast publishing platform for modern blogs, memberships & newsletters.", default_port: 2368, category: "Web & CMS", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "directus", name: "Directus", description: "Headless CMS & instant REST/GraphQL data studio.", default_port: 8055, category: "Web & CMS", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "nocodb", name: "NocoDB", description: "Open-source Airtable alternative — no-code smart spreadsheets & APIs.", default_port: 8086, category: "Web & CMS", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "n8n", name: "n8n", description: "Workflow automation with a visual editor and 400+ integrations.", default_port: 5678, category: "AI & Automation", installed: false, web_ui: true, bind: null, update_available: false },
+      { slug: "openwebui", name: "Open WebUI", description: "Self-hosted ChatGPT-style AI web interface for local & API LLMs.", default_port: 3014, category: "AI & Automation", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "ollama", name: "Ollama AI", description: "Run Llama, Qwen, DeepSeek & Mistral AI models locally via REST API.", default_port: 11434, category: "AI & Automation", installed: false, web_ui: false, bind: null, update_available: null },
+      { slug: "flowise", name: "Flowise AI", description: "Drag-and-drop AI agents, chatbots & RAG workflow builder.", default_port: 3015, category: "AI & Automation", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "nextcloud", name: "Nextcloud", description: "Self-hosted cloud drive, file sync, calendar & team collaboration.", default_port: 8087, category: "Cloud & Productivity", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "vaultwarden", name: "Vaultwarden", description: "Bitwarden-compatible self-hosted password manager & secrets vault.", default_port: 8088, category: "Cloud & Productivity", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "filebrowser", name: "FileBrowser", description: "Fast web file manager with upload, preview & shareable links.", default_port: 8089, category: "Cloud & Productivity", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "jellyfin", name: "Jellyfin", description: "Self-hosted media streaming server for movies, music & live TV.", default_port: 8096, category: "Cloud & Productivity", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "memos", name: "Memos", description: "Fast, privacy-first note taking and lightweight knowledge hub.", default_port: 5230, category: "Cloud & Productivity", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "stirlingpdf", name: "Stirling PDF", description: "All-in-one PDF tools: merge, split, compress, OCR & convert.", default_port: 8094, category: "Cloud & Productivity", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "roundcube", name: "Roundcube Webmail", description: "Browser webmail client wired to Postfix and Dovecot.", default_port: 8082, category: "Cloud & Productivity", installed: true, web_ui: false, bind: null, update_available: null },
+      { slug: "gitea", name: "Gitea", description: "Lightweight self-hosted GitHub / Git repositories & CI/CD (HTTP 3012, SSH 2222).", default_port: 3012, category: "DevOps & Monitoring", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "portainer", name: "Portainer CE", description: "Visual web UI to manage Docker containers, stacks, images & volumes.", default_port: 9005, category: "DevOps & Monitoring", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "uptimekuma", name: "Uptime Kuma", description: "Real-time uptime monitor, alerting & public status pages.", default_port: 3010, category: "DevOps & Monitoring", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "grafana", name: "Grafana", description: "Observability dashboards for Prometheus, ClickHouse & SQL metrics.", default_port: 3011, category: "DevOps & Monitoring", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "prometheus", name: "Prometheus", description: "High-performance time-series metrics collection & alerting engine.", default_port: 9090, category: "DevOps & Monitoring", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "dozzle", name: "Dozzle", description: "Lightweight real-time Docker container log viewer.", default_port: 8091, category: "DevOps & Monitoring", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "ittools", name: "IT-Tools", description: "Collection of 70+ handy developer & sysadmin utilities.", default_port: 8093, category: "DevOps & Monitoring", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "metabase", name: "Metabase BI", description: "Self-service business intelligence, charts & SQL analytics dashboards.", default_port: 3013, category: "Databases & Cache", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "mongodb", name: "MongoDB 7", description: "High-scale NoSQL JSON document database (Docker, port 27017).", default_port: 27017, category: "Databases & Cache", installed: false, web_ui: false, bind: null, update_available: null },
+      { slug: "rabbitmq", name: "RabbitMQ", description: "Enterprise message broker & job queue with Management UI (15672 / 5672).", default_port: 15672, category: "Databases & Cache", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "adminer", name: "Adminer", description: "Universal lightweight SQL UI for MariaDB, PostgreSQL & SQLite.", default_port: 8095, category: "Databases & Cache", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "mariadb", name: "MariaDB", description: "Drop-in MySQL replacement (community fork). Listens on 3306.", default_port: 3306, category: "Databases & Cache", installed: true, web_ui: false, bind: "127.0.0.1", update_available: null },
+      { slug: "postgresql", name: "PostgreSQL", description: "Reliable relational database with rich SQL support. Listens on 5432.", default_port: 5432, category: "Databases & Cache", installed: true, web_ui: false, bind: "127.0.0.1", update_available: null },
+      { slug: "pgvector", name: "pgvector", description: "PostgreSQL extension for vector similarity search / embeddings.", default_port: 0, category: "Databases & Cache", installed: false, web_ui: false, bind: null, update_available: null },
+      { slug: "redis", name: "Redis", description: "In-memory cache and queue store on 127.0.0.1:6379.", default_port: 6379, category: "Databases & Cache", installed: true, web_ui: false, bind: "127.0.0.1", update_available: null },
+      { slug: "valkey", name: "Valkey", description: "High-speed open-source Redis-compatible cache & queue engine.", default_port: 6380, category: "Databases & Cache", installed: false, web_ui: false, bind: null, update_available: null },
+      { slug: "memcached", name: "Memcached", description: "Multi-threaded in-memory object cache for ultra-fast session & query speed.", default_port: 11211, category: "Databases & Cache", installed: false, web_ui: false, bind: null, update_available: null },
+      { slug: "minio", name: "MinIO S3", description: "High-speed S3-compatible massive object storage for media, backups & datasets.", default_port: 9001, category: "Databases & Cache", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "clickhouse", name: "ClickHouse", description: "Ultra-fast columnar OLAP database for billions of rows & real-time analytics.", default_port: 8123, category: "Databases & Cache", installed: false, web_ui: false, bind: null, update_available: null },
+      { slug: "meilisearch", name: "Meilisearch", description: "Sub-50ms full-text search engine for millions of products & records.", default_port: 7700, category: "Databases & Cache", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "qdrant", name: "Qdrant", description: "Vector database for semantic search and RAG.", default_port: 6333, category: "Databases & Cache", installed: false, web_ui: false, bind: null, update_available: null },
+      { slug: "pgadmin", name: "pgAdmin", description: "Web UI for PostgreSQL databases and roles.", default_port: 5050, category: "Databases & Cache", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "phpmyadmin", name: "phpMyAdmin", description: "Web UI for MariaDB databases and users.", default_port: 8081, category: "Databases & Cache", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "docker", name: "Docker", description: "Container runtime for Docker apps and one-click tools.", default_port: 0, category: "Infrastructure", installed: true, web_ui: false, bind: null, update_available: null },
+      { slug: "nginx", name: "Nginx", description: "HTTP server and reverse proxy. Listens on 80/443.", default_port: 80, category: "Infrastructure", installed: true, web_ui: false, bind: null, update_available: null },
+      { slug: "k3s", name: "K3s Cluster", description: "Lightweight CNCF Kubernetes control plane for multi-server horizontal scaling.", default_port: 6443, category: "Infrastructure", installed: false, web_ui: false, bind: null, update_available: null },
+      { slug: "tailscale", name: "Tailscale", description: "Zero-config private mesh VPN for server access.", default_port: 0, category: "Infrastructure", installed: false, web_ui: false, bind: null, update_available: null },
     ],
     hostname: os.hostname() || "ubuntu-vps-01",
     swapMb: 2048,
@@ -471,6 +508,12 @@ function getState(): PreviewState {
       },
     ],
     manualBannedIps: ["198.51.100.77"],
+    scaleEnabled: {
+      kernel_bbr: true,
+      nginx_cache: true,
+      mariadb_tune: false,
+      postgresql_tune: false,
+    },
   };
   return g.__boltPreviewState;
 }
@@ -1311,6 +1354,14 @@ export async function handlePreviewAgentRequest<T>(
     return (s.tasks.find((t) => t.id === id) ?? s.tasks[0]) as T;
   }
   if (m === "GET" && pathname === "/quick-install") return s.quickInstall as T;
+  const qiBindMatch = pathname.match(/^\/quick-install\/([^/]+)\/bind$/);
+  if (qiBindMatch && m === "POST") {
+    const slug = decodeURIComponent(qiBindMatch[1]);
+    const item = s.quickInstall.find((r) => r.slug === slug);
+    const bindVal = String(b.bind ?? "127.0.0.1");
+    if (item) item.bind = bindVal;
+    return { task_id: makeTask(s, `quick-install-bind:${slug}`, [`Rebound ${slug} to ${bindVal}`]) } as T;
+  }
   if (m === "POST" && pathname.startsWith("/quick-install/")) {
     const slug = pathname.split("/")[2];
     const item = s.quickInstall.find((r) => r.slug === slug);
@@ -1319,6 +1370,71 @@ export async function handlePreviewAgentRequest<T>(
       item.bind = "127.0.0.1";
     }
     return { task_id: makeTask(s, `quick-install:${slug}`, [`Installed ${slug}`]) } as T;
+  }
+
+  // Performance & Scale tuning
+  const buildPreviewScale = (): ScaleStatus => {
+    const ramMb = Math.max(1024, Math.round(os.totalmem() / 1024 / 1024));
+    const cores = Math.max(1, os.cpus().length);
+    const bbrOn = s.scaleEnabled.kernel_bbr;
+    return {
+      ram_total_mb: ramMb,
+      cpu_cores: cores,
+      tcp_congestion_control: bbrOn ? "bbr" : "cubic",
+      somaxconn: bbrOn ? 65535 : 4096,
+      file_max: bbrOn ? 2097152 : 1048576,
+      bbr_available: true,
+      profiles: [
+        {
+          id: "kernel_bbr",
+          label: "Kernel TCP BBR & High-Concurrency Sockets",
+          summary: "Enables Google TCP BBR congestion control, 65k socket backlog (somaxconn), port reuse, and 2M file descriptors for high concurrent traffic.",
+          available: true,
+          enabled: s.scaleEnabled.kernel_bbr,
+          detail: `/etc/sysctl.d/98-paix-scale.conf · congestion=${bbrOn ? "bbr" : "cubic"}, somaxconn=${bbrOn ? 65535 : 4096}`,
+        },
+        {
+          id: "nginx_cache",
+          label: "Nginx High-Speed Edge & Micro-Cache",
+          summary: "Creates shared 4 GB fast proxy cache zone (paix_cache), 100k open_file_cache, and 10k keepalive requests per connection.",
+          available: true,
+          enabled: s.scaleEnabled.nginx_cache,
+          detail: "/etc/nginx/conf.d/90-paix-scale.conf · cache_dir=/var/cache/nginx/paix",
+        },
+        {
+          id: "mariadb_tune",
+          label: "MariaDB High-Throughput Engine",
+          summary: "Scales innodb_buffer_pool_size (~40% RAM), sets 500 max_connections, fast redo log flushing, and 2000 IOPS capacity.",
+          available: true,
+          enabled: s.scaleEnabled.mariadb_tune,
+          detail: `/etc/mysql/mariadb.conf.d/98-paix-scale.cnf · buffer_pool=${Math.max(128, Math.round(ramMb * 0.4))}MB · max_connections=500`,
+        },
+        {
+          id: "postgresql_tune",
+          label: "PostgreSQL High-Throughput Engine",
+          summary: "Tones shared_buffers (~25% RAM), effective_cache_size (~50% RAM), 300 max_connections, and NVMe random_page_cost=1.1.",
+          available: true,
+          enabled: s.scaleEnabled.postgresql_tune,
+          detail: `/etc/postgresql/16/main/conf.d/98-paix-scale.conf · shared_buffers=${Math.max(128, Math.round(ramMb * 0.25))}MB · effective_cache=${Math.max(256, Math.round(ramMb * 0.5))}MB`,
+        },
+      ],
+    };
+  };
+  if (m === "GET" && pathname === "/scale/status") {
+    return buildPreviewScale() as T;
+  }
+  if (m === "POST" && pathname === "/scale/apply") {
+    const profile = String(b.profile ?? "");
+    const enable = Boolean(b.enable);
+    if (profile === "all") {
+      s.scaleEnabled.kernel_bbr = enable;
+      s.scaleEnabled.nginx_cache = enable;
+      s.scaleEnabled.mariadb_tune = enable;
+      s.scaleEnabled.postgresql_tune = enable;
+    } else if (profile in s.scaleEnabled) {
+      s.scaleEnabled[profile as ScaleProfileId] = enable;
+    }
+    return buildPreviewScale() as T;
   }
   if (m === "GET" && pathname === "/docker/status") {
     return { installed: true, running: true, version: "27.3.1" } as T;

@@ -407,6 +407,8 @@ export default async function AppsPage() {
         <QuickInstallStrip
           recipes={recipes}
           serverAddress={serverAddress}
+          heading="1-Click App Store & Services"
+          hint="Install CMS, AI, analytics, monitoring, cloud drive & database apps in 1 click — then click Route → to add an HTTPS domain."
           installAction={quickInstallAction}
           bindAction={setBindAction}
           getRoundcubeSettings={getRoundcubeSettingsAction}
@@ -418,7 +420,7 @@ export default async function AppsPage() {
           setN8nAutoCheck={setN8nAutoCheckAction}
           getPhpMyAdminSettings={getPhpMyAdminSettingsAction}
           updatePhpMyAdminSettings={updatePhpMyAdminSettingsAction}
-          showRouteButton={false}
+          showRouteButton={true}
           tailscale={tailscale}
         />
       </div>

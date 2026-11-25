@@ -1,5 +1,4 @@
 "use client";
-"use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ActionResult } from "@/server-actions/auth";
@@ -175,13 +174,22 @@ export default function LoginForm({
     };
     window.addEventListener("focus", onFocus);
 
+    let ticks = 0;
     const timer = window.setInterval(async () => {
+      ticks += 1;
       if (popupRef.current && popupRef.current.closed) {
         window.clearInterval(timer);
         const ok = await checkEstablishedSession();
         if (!cancelled && !ok) {
           setGoogleBusy(false);
           preloadGoogleUrl(remember);
+        }
+        return;
+      }
+      if (ticks % 3 === 0 && !cancelled) {
+        const ok = await checkEstablishedSession();
+        if (ok) {
+          window.clearInterval(timer);
         }
       }
     }, 500);

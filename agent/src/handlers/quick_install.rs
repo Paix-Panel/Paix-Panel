@@ -18,6 +18,9 @@ type Recipe = &'static [Step];
 enum Check {
     SystemdUnit(&'static str),
     DockerContainer(&'static str),
+    /// A CLI binary/runtime, considered installed when found on standard
+    /// system/user toolchain paths or via `which`.
+    Binary(&'static str),
     /// A PostgreSQL extension, considered installed when its `<name>.control`
     /// file is present under any installed major version's extension dir. Used
     /// for pgvector, whose apt package is version-pinned and not a service.
@@ -320,6 +323,7 @@ async fn pgadmin_data_has_a_login() -> bool {
 const DIRECTUS_KEY_ARG: &str = "KEY=";
 const DIRECTUS_SECRET_ARG: &str = "SECRET=";
 const DIRECTUS_ADMIN_PW_ARG: &str = "ADMIN_PASSWORD=";
+const CODESERVER_PASSWORD_ARG: &str = "PASSWORD=";
 
 fn loggable_arg(arg: &str) -> &str {
     if arg.starts_with(PGADMIN_PASSWORD_ARG) {
@@ -334,6 +338,8 @@ fn loggable_arg(arg: &str) -> &str {
         "SECRET=(not shown)"
     } else if arg.starts_with(DIRECTUS_ADMIN_PW_ARG) {
         "ADMIN_PASSWORD=(not shown)"
+    } else if arg.starts_with(CODESERVER_PASSWORD_ARG) {
+        "PASSWORD=(not shown)"
     } else if arg.starts_with("WORDPRESS_DB_PASSWORD=") {
         "WORDPRESS_DB_PASSWORD=(not shown)"
     } else {
@@ -1050,6 +1056,265 @@ const STIRLINGPDF: Recipe = &[
     ],
 ];
 
+const NODEJS: Recipe = &[
+    &["apt-get", "update"],
+    &["apt-get", "install", "-y", "curl", "ca-certificates", "gnupg"],
+    &[
+        "sh",
+        "-c",
+        "if ! command -v node >/dev/null 2>&1 || [ \"$(node -v | sed 's/^v//; s/\\..*//')\" -lt 22 ]; then curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y -o DPkg::Lock::Timeout=120 nodejs; fi",
+    ],
+    &["sh", "-c", "command -v pm2 >/dev/null 2>&1 || npm install -g pm2"],
+];
+
+const PYTHON: Recipe = &[
+    &["apt-get", "update"],
+    &["apt-get", "install", "-y", "python3", "python3-pip", "python3-venv", "python3-dev", "build-essential"],
+];
+
+const PHP: Recipe = &[
+    &["apt-get", "update"],
+    &[
+        "apt-get",
+        "install",
+        "-y",
+        "php",
+        "php-fpm",
+        "php-cli",
+        "php-mysql",
+        "php-pgsql",
+        "php-sqlite3",
+        "php-curl",
+        "php-mbstring",
+        "php-xml",
+        "php-zip",
+        "unzip",
+        "composer",
+    ],
+];
+
+const GOLANG: Recipe = &[
+    &["apt-get", "update"],
+    &["apt-get", "install", "-y", "golang-go"],
+];
+
+const JAVA: Recipe = &[
+    &["apt-get", "update"],
+    &["apt-get", "install", "-y", "openjdk-21-jdk", "maven"],
+];
+
+const RUBY: Recipe = &[
+    &["apt-get", "update"],
+    &["apt-get", "install", "-y", "ruby-full", "bundler", "build-essential"],
+];
+
+const RUST_LANG: Recipe = &[
+    &["apt-get", "update"],
+    &["apt-get", "install", "-y", "rustc", "cargo", "build-essential", "pkg-config", "libssl-dev"],
+];
+
+const BUN: Recipe = &[
+    &["apt-get", "update"],
+    &["apt-get", "install", "-y", "curl", "unzip", "ca-certificates"],
+    &[
+        "sh",
+        "-c",
+        "curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash && chmod 755 /usr/local/bin/bun",
+    ],
+];
+
+const DENO: Recipe = &[
+    &["apt-get", "update"],
+    &["apt-get", "install", "-y", "curl", "unzip", "ca-certificates"],
+    &[
+        "sh",
+        "-c",
+        "curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh -s -- -y && chmod 755 /usr/local/bin/deno",
+    ],
+];
+
+const DOTNET: Recipe = &[
+    &["apt-get", "update"],
+    &["apt-get", "install", "-y", "dotnet-sdk-8.0"],
+];
+
+const PM2: Recipe = &[
+    &["apt-get", "update"],
+    &[
+        "sh",
+        "-c",
+        "command -v npm >/dev/null 2>&1 || apt-get install -y -o DPkg::Lock::Timeout=120 nodejs npm",
+    ],
+    &["npm", "install", "-g", "pm2"],
+];
+
+const SUPERVISOR: Recipe = &[
+    &["apt-get", "update"],
+    &["apt-get", "install", "-y", "supervisor"],
+    &["systemctl", "enable", "supervisor"],
+    &["systemctl", "start", "supervisor"],
+];
+
+const CODESERVER: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "codeserver_config"],
+    &["docker", "volume", "create", "codeserver_workspace"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "codeserver",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:8443:8080",
+        "-e",
+        CODESERVER_PASSWORD_ARG,
+        "-v",
+        "codeserver_config:/home/coder/.config",
+        "-v",
+        "codeserver_workspace:/home/coder/project",
+        "codercom/code-server:latest",
+    ],
+];
+
+const POCKETBASE: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "pocketbase_data"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "pocketbase",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:8090:8090",
+        "-v",
+        "pocketbase_data:/pb_data",
+        "ghcr.io/muchobien/pocketbase:latest",
+    ],
+];
+
+const MAILPIT: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "mailpit",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:8025:8025",
+        "-p",
+        "127.0.0.1:1025:1025",
+        "axllent/mailpit:latest",
+    ],
+];
+
+const SYNCTHING: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "syncthing_data"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "syncthing",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:8384:8384",
+        "-v",
+        "syncthing_data:/var/syncthing",
+        "syncthing/syncthing:latest",
+    ],
+];
+
+const HOMEPAGE: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "homepage_config"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "homepage",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:3016:3000",
+        "-v",
+        "homepage_config:/app/config",
+        "ghcr.io/gethomepage/homepage:latest",
+    ],
+];
+
+const DOCKERREGISTRY: Recipe = &[
+    &["apt-get", "update"],
+    INSTALL_DOCKER,
+    &["systemctl", "enable", "docker"],
+    &["systemctl", "start", "docker"],
+    &["docker", "volume", "create", "registry_data"],
+    &[
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "dockerregistry",
+        "--restart",
+        "unless-stopped",
+        "--log-opt",
+        DOCKER_LOG_MAX_SIZE,
+        "--log-opt",
+        DOCKER_LOG_MAX_FILE,
+        "-p",
+        "127.0.0.1:5000:5000",
+        "-v",
+        "registry_data:/var/lib/registry",
+        "registry:2",
+    ],
+];
+
 #[derive(Serialize, Clone, Copy)]
 pub struct RecipeInfo {
     pub slug: &'static str,
@@ -1078,6 +1343,138 @@ pub struct RecipeListItem {
 }
 
 const RECIPES: &[(RecipeInfo, Recipe, Check)] = &[
+    (
+        RecipeInfo {
+            slug: "nodejs",
+            name: "Node.js 22 LTS",
+            description: "Node.js 22 LTS runtime, npm package manager & PM2 process manager.",
+            default_port: 0,
+            category: "Runtimes & Languages",
+        },
+        NODEJS,
+        Check::Binary("node"),
+    ),
+    (
+        RecipeInfo {
+            slug: "python",
+            name: "Python 3 + pip",
+            description: "Python 3 runtime, pip, venv & build headers for Django, FastAPI, Flask & AI.",
+            default_port: 0,
+            category: "Runtimes & Languages",
+        },
+        PYTHON,
+        Check::Binary("python3"),
+    ),
+    (
+        RecipeInfo {
+            slug: "php",
+            name: "PHP + Composer",
+            description: "PHP CLI, PHP-FPM, MySQL/Postgres/Curl/XML/Zip extensions & Composer.",
+            default_port: 0,
+            category: "Runtimes & Languages",
+        },
+        PHP,
+        Check::Binary("php"),
+    ),
+    (
+        RecipeInfo {
+            slug: "golang",
+            name: "Go (Golang)",
+            description: "Go compiler & toolchain for ultra-fast APIs, microservices & CLI binaries.",
+            default_port: 0,
+            category: "Runtimes & Languages",
+        },
+        GOLANG,
+        Check::Binary("go"),
+    ),
+    (
+        RecipeInfo {
+            slug: "java",
+            name: "Java 21 JDK",
+            description: "OpenJDK 21 & Maven build tool for Spring Boot, Kotlin & JVM services.",
+            default_port: 0,
+            category: "Runtimes & Languages",
+        },
+        JAVA,
+        Check::Binary("java"),
+    ),
+    (
+        RecipeInfo {
+            slug: "ruby",
+            name: "Ruby + Bundler",
+            description: "Full Ruby interpreter, Bundler & native gem toolchain for Rails & Sinatra.",
+            default_port: 0,
+            category: "Runtimes & Languages",
+        },
+        RUBY,
+        Check::Binary("ruby"),
+    ),
+    (
+        RecipeInfo {
+            slug: "rust",
+            name: "Rust + Cargo",
+            description: "Rust compiler & Cargo toolchain for high-performance Actix/Axum services.",
+            default_port: 0,
+            category: "Runtimes & Languages",
+        },
+        RUST_LANG,
+        Check::Binary("rustc"),
+    ),
+    (
+        RecipeInfo {
+            slug: "bun",
+            name: "Bun Runtime",
+            description: "Ultra-fast all-in-one JavaScript & TypeScript runtime, bundler & test runner.",
+            default_port: 0,
+            category: "Runtimes & Languages",
+        },
+        BUN,
+        Check::Binary("bun"),
+    ),
+    (
+        RecipeInfo {
+            slug: "deno",
+            name: "Deno 2",
+            description: "Secure, batteries-included TypeScript & JavaScript runtime.",
+            default_port: 0,
+            category: "Runtimes & Languages",
+        },
+        DENO,
+        Check::Binary("deno"),
+    ),
+    (
+        RecipeInfo {
+            slug: "dotnet",
+            name: ".NET 8 SDK",
+            description: "Microsoft .NET 8 SDK & runtime for ASP.NET Core web APIs and apps.",
+            default_port: 0,
+            category: "Runtimes & Languages",
+        },
+        DOTNET,
+        Check::Binary("dotnet"),
+    ),
+    (
+        RecipeInfo {
+            slug: "pm2",
+            name: "PM2 Manager",
+            description: "Cluster-mode process manager with zero-downtime reload for Node & Python apps.",
+            default_port: 0,
+            category: "Runtimes & Languages",
+        },
+        PM2,
+        Check::Binary("pm2"),
+    ),
+    (
+        RecipeInfo {
+            slug: "supervisor",
+            name: "Supervisor",
+            description: "Daemon process controller for background queues, workers & Celery tasks.",
+            default_port: 0,
+            category: "Runtimes & Languages",
+        },
+        SUPERVISOR,
+        Check::SystemdUnit("supervisor"),
+    ),
     (
         RecipeInfo {
             slug: "wordpress",
@@ -1201,6 +1598,28 @@ const RECIPES: &[(RecipeInfo, Recipe, Check)] = &[
     ),
     (
         RecipeInfo {
+            slug: "syncthing",
+            name: "Syncthing",
+            description: "Continuous encrypted file synchronization across servers & devices.",
+            default_port: 8384,
+            category: "Cloud & Productivity",
+        },
+        SYNCTHING,
+        Check::DockerContainer("syncthing"),
+    ),
+    (
+        RecipeInfo {
+            slug: "homepage",
+            name: "Homepage",
+            description: "Modern customizable startpage dashboard & service launcher.",
+            default_port: 3016,
+            category: "Cloud & Productivity",
+        },
+        HOMEPAGE,
+        Check::DockerContainer("homepage"),
+    ),
+    (
+        RecipeInfo {
             slug: "jellyfin",
             name: "Jellyfin",
             description: "Self-hosted media streaming server for movies, music & live TV.",
@@ -1242,6 +1661,28 @@ const RECIPES: &[(RecipeInfo, Recipe, Check)] = &[
         },
         ROUNDCUBE,
         Check::DockerContainer("roundcube"),
+    ),
+    (
+        RecipeInfo {
+            slug: "codeserver",
+            name: "VS Code Web",
+            description: "Full VS Code IDE in your browser with terminal & extensions (port 8443).",
+            default_port: 8443,
+            category: "DevOps & Monitoring",
+        },
+        CODESERVER,
+        Check::DockerContainer("codeserver"),
+    ),
+    (
+        RecipeInfo {
+            slug: "mailpit",
+            name: "Mailpit",
+            description: "Email testing & SMTP catch-all sandbox for staging apps (UI 8025, SMTP 1025).",
+            default_port: 8025,
+            category: "DevOps & Monitoring",
+        },
+        MAILPIT,
+        Check::DockerContainer("mailpit"),
     ),
     (
         RecipeInfo {
@@ -1319,6 +1760,17 @@ const RECIPES: &[(RecipeInfo, Recipe, Check)] = &[
         },
         ITTOOLS,
         Check::DockerContainer("ittools"),
+    ),
+    (
+        RecipeInfo {
+            slug: "pocketbase",
+            name: "PocketBase",
+            description: "Single-binary backend: SQLite realtime DB, Auth, File Storage & Admin UI (8090).",
+            default_port: 8090,
+            category: "Databases & Cache",
+        },
+        POCKETBASE,
+        Check::DockerContainer("pocketbase"),
     ),
     (
         RecipeInfo {
@@ -1506,6 +1958,17 @@ const RECIPES: &[(RecipeInfo, Recipe, Check)] = &[
         },
         DOCKER,
         Check::SystemdUnit("docker"),
+    ),
+    (
+        RecipeInfo {
+            slug: "dockerregistry",
+            name: "Docker Registry",
+            description: "Private OCI container image registry for storing & pulling builds (port 5000).",
+            default_port: 5000,
+            category: "Infrastructure",
+        },
+        DOCKERREGISTRY,
+        Check::DockerContainer("dockerregistry"),
     ),
     (
         RecipeInfo {
@@ -1889,6 +2352,61 @@ const STIRLINGPDF_SERVICE: DockerService = DockerService {
     cmd_args: &[],
 };
 
+const CODESERVER_SERVICE: DockerService = DockerService {
+    container_name: "codeserver",
+    host_port: 8443,
+    container_port: 8080,
+    extra_ports: &[],
+    image: "codercom/code-server:latest",
+    extra_args: &[
+        "-v",
+        "codeserver_config:/home/coder/.config",
+        "-v",
+        "codeserver_workspace:/home/coder/project",
+    ],
+    cmd_args: &[],
+};
+
+const POCKETBASE_SERVICE: DockerService = DockerService {
+    container_name: "pocketbase",
+    host_port: 8090,
+    container_port: 8090,
+    extra_ports: &[],
+    image: "ghcr.io/muchobien/pocketbase:latest",
+    extra_args: &["-v", "pocketbase_data:/pb_data"],
+    cmd_args: &[],
+};
+
+const MAILPIT_SERVICE: DockerService = DockerService {
+    container_name: "mailpit",
+    host_port: 8025,
+    container_port: 8025,
+    extra_ports: &[(1025, 1025)],
+    image: "axllent/mailpit:latest",
+    extra_args: &[],
+    cmd_args: &[],
+};
+
+const SYNCTHING_SERVICE: DockerService = DockerService {
+    container_name: "syncthing",
+    host_port: 8384,
+    container_port: 8384,
+    extra_ports: &[],
+    image: "syncthing/syncthing:latest",
+    extra_args: &["-v", "syncthing_data:/var/syncthing"],
+    cmd_args: &[],
+};
+
+const HOMEPAGE_SERVICE: DockerService = DockerService {
+    container_name: "homepage",
+    host_port: 3016,
+    container_port: 3000,
+    extra_ports: &[],
+    image: "ghcr.io/gethomepage/homepage:latest",
+    extra_args: &["-v", "homepage_config:/app/config"],
+    cmd_args: &[],
+};
+
 // Roundcube is intentionally NOT in web_ui_service: its container env vars
 // depend on the host's mail FQDN, so rebind would need to re-detect that. The
 // expected access path is through a Sites mapping (https://webmail.<domain>),
@@ -1923,12 +2441,44 @@ fn web_ui_service(slug: &str) -> Option<&'static DockerService> {
         "adminer" => Some(&ADMINER_SERVICE),
         "ittools" => Some(&ITTOOLS_SERVICE),
         "stirlingpdf" => Some(&STIRLINGPDF_SERVICE),
+        "codeserver" => Some(&CODESERVER_SERVICE),
+        "pocketbase" => Some(&POCKETBASE_SERVICE),
+        "mailpit" => Some(&MAILPIT_SERVICE),
+        "syncthing" => Some(&SYNCTHING_SERVICE),
+        "homepage" => Some(&HOMEPAGE_SERVICE),
         _ => None,
     }
 }
 
 fn lookup(slug: &str) -> Option<&'static (RecipeInfo, Recipe, Check)> {
     RECIPES.iter().find(|(info, _, _)| info.slug == slug)
+}
+
+async fn binary_installed(bin: &str) -> bool {
+    let candidates = [
+        format!("/usr/bin/{bin}"),
+        format!("/usr/local/bin/{bin}"),
+        format!("/bin/{bin}"),
+        format!("/snap/bin/{bin}"),
+        format!("/root/.bun/bin/{bin}"),
+        format!("/root/.deno/bin/{bin}"),
+        format!("/root/.cargo/bin/{bin}"),
+    ];
+    for p in &candidates {
+        if tokio::fs::metadata(p).await.map(|m| m.is_file()).unwrap_or(false) {
+            return true;
+        }
+    }
+    matches!(
+        Command::new("which")
+            .arg(bin)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await,
+        Ok(s) if s.success()
+    )
 }
 
 async fn is_installed(check: Check) -> bool {
@@ -1956,6 +2506,7 @@ async fn is_installed(check: Check) -> bool {
                 .await,
             Ok(s) if s.success()
         ),
+        Check::Binary(bin) => binary_installed(bin).await,
         Check::PgExtension(name) => pg_extension_available(name).await,
         Check::Tailscale => super::tailscale::installed().await,
     }
@@ -2523,6 +3074,7 @@ pub async fn run(
         let directus_key = (slug_owned == "directus").then(random_password);
         let directus_secret = (slug_owned == "directus").then(random_password);
         let directus_admin_pw = (slug_owned == "directus").then(random_password);
+        let codeserver_pw = (slug_owned == "codeserver").then(random_password);
 
         for (idx, step) in recipe.iter().enumerate() {
             let cmd = step[0];
@@ -2557,6 +3109,11 @@ pub async fn run(
                     if let Some(pw) = &directus_admin_pw {
                         if *arg == DIRECTUS_ADMIN_PW_ARG {
                             return format!("{DIRECTUS_ADMIN_PW_ARG}{pw}");
+                        }
+                    }
+                    if let Some(pw) = &codeserver_pw {
+                        if *arg == CODESERVER_PASSWORD_ARG {
+                            return format!("{CODESERVER_PASSWORD_ARG}{pw}");
                         }
                     }
                     arg.to_string()
@@ -2704,6 +3261,11 @@ pub async fn run(
         if let Some(pw) = &directus_admin_pw {
             task.log(format!("Directus initial admin login: admin@example.com, password: {pw}"));
             task.log("URL: http://127.0.0.1:8055 (Route a domain in /domains for HTTPS)".to_string());
+        }
+
+        if let Some(pw) = &codeserver_pw {
+            task.log(format!("VS Code Web (code-server) password: {pw}"));
+            task.log("URL: http://127.0.0.1:8443 (Route a domain in /domains for HTTPS)".to_string());
         }
 
         task.log(format!("{display_name} installed successfully"));
@@ -4032,6 +4594,7 @@ pub async fn set_bind(
         "minio" => &["MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD"],
         "meilisearch" => &["MEILI_MASTER_KEY"],
         "directus" => &["KEY", "SECRET", "ADMIN_PASSWORD"],
+        "codeserver" => &["PASSWORD"],
         "wordpress" => &[
             "WORDPRESS_DB_HOST",
             "WORDPRESS_DB_USER",

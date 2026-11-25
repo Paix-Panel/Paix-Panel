@@ -51,6 +51,103 @@ function slotKey(s: PortSite | null | undefined): string {
   return s ? `${s.domain}|${s.upstream_port}` : "";
 }
 
+const RUNTIME_OPTIONS = [
+  { value: "node", label: "Node.js (npm / Next.js / Express)" },
+  { value: "python", label: "Python 3 (FastAPI / Django / Flask)" },
+  { value: "php", label: "PHP (Laravel / Symfony / Built-in)" },
+  { value: "go", label: "Go (Golang binary)" },
+  { value: "bun", label: "Bun (TypeScript / JS)" },
+  { value: "deno", label: "Deno 2 (TypeScript / JS)" },
+  { value: "ruby", label: "Ruby (Rails / Puma / Sinatra)" },
+  { value: "rust", label: "Rust (Cargo release binary)" },
+  { value: "java", label: "Java (Spring Boot / JAR)" },
+  { value: "dotnet", label: ".NET 8 (ASP.NET Core)" },
+  { value: "custom", label: "Custom binary / script" },
+] as const;
+
+type RuntimeValue = (typeof RUNTIME_OPTIONS)[number]["value"];
+
+type EntryPreset = { label: string; cmd: string };
+
+function presetsForRuntime(runtime: string, port: number): EntryPreset[] {
+  const p = port > 0 ? port : 3000;
+  switch (runtime) {
+    case "node":
+      return [
+        { label: "npm start", cmd: "/usr/bin/npm start" },
+        { label: "node dist/server.js", cmd: "/usr/bin/node dist/server.js" },
+        { label: "pm2-runtime", cmd: "/usr/bin/npx pm2-runtime ecosystem.config.js" },
+      ];
+    case "python":
+      return [
+        {
+          label: "Uvicorn (FastAPI)",
+          cmd: `.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port ${p}`,
+        },
+        {
+          label: "Gunicorn (Flask/Django)",
+          cmd: `.venv/bin/gunicorn -w 4 -b 127.0.0.1:${p} app:app`,
+        },
+        { label: "python3 app.py", cmd: ".venv/bin/python app.py" },
+      ];
+    case "php":
+      return [
+        { label: "PHP server (public/)", cmd: `/usr/bin/php -S 127.0.0.1:${p} -t public` },
+        {
+          label: "Laravel artisan",
+          cmd: `/usr/bin/php artisan serve --host=127.0.0.1 --port=${p}`,
+        },
+        { label: "PHP server (root)", cmd: `/usr/bin/php -S 127.0.0.1:${p}` },
+      ];
+    case "go":
+      return [
+        { label: "./app", cmd: "./app" },
+        { label: "./server", cmd: "./server" },
+      ];
+    case "bun":
+      return [
+        { label: "bun run start", cmd: "/usr/local/bin/bun run start" },
+        { label: "bun index.ts", cmd: "/usr/local/bin/bun index.ts" },
+      ];
+    case "deno":
+      return [
+        { label: "deno task start", cmd: "/usr/local/bin/deno task start" },
+        { label: "deno main.ts", cmd: "/usr/local/bin/deno run --allow-all main.ts" },
+      ];
+    case "ruby":
+      return [
+        {
+          label: "Rails server",
+          cmd: `/usr/bin/bundle exec rails server -b 127.0.0.1 -p ${p}`,
+        },
+        {
+          label: "Puma",
+          cmd: `/usr/bin/bundle exec puma -C config/puma.rb -p ${p}`,
+        },
+      ];
+    case "rust":
+      return [
+        { label: "./target/release/app", cmd: "./target/release/app" },
+        { label: "./target/release/server", cmd: "./target/release/server" },
+      ];
+    case "java":
+      return [
+        { label: "java -jar app.jar", cmd: "/usr/bin/java -jar app.jar" },
+        {
+          label: "Spring Boot JAR",
+          cmd: "/usr/bin/java -jar target/app.jar",
+        },
+      ];
+    case "dotnet":
+      return [
+        { label: "dotnet out/app.dll", cmd: "/usr/bin/dotnet out/app.dll" },
+        { label: "dotnet run", cmd: "/usr/bin/dotnet run --no-build" },
+      ];
+    default:
+      return [{ label: "./start.sh", cmd: "./start.sh" }];
+  }
+}
+
 export default function DeployForm({
   action,
   checkSourceState,
@@ -84,13 +181,39 @@ export default function DeployForm({
   );
   const pickedSlot =
     portSites.find((s) => slotKey(s) === pickedSlotKey) ?? portSites[0] ?? null;
+  const activePort = pickedSlot?.upstream_port ?? 3000;
   const [repoUrl, setRepoUrl] = useState(initialRepoUrl);
+  const [runtime, setRuntime] = useState<RuntimeValue>("node");
   // Exec start must survive the post-action form.reset() (React 19) like the
   // other operator-typed fields, or a multi-step deploy silently reverts it to
   // the default and starts the wrong entrypoint.
   const [execStart, setExecStart] = useState("/usr/bin/npm start");
+  const [customExecEdited, setCustomExecEdited] = useState(false);
   const sourceDir = name ? `${APPS_BASE_DIR}/${name}` : `${APPS_BASE_DIR}/<app-name>`;
   const nameLocked = !!lockedName;
+  const presets = presetsForRuntime(runtime, activePort);
+
+  const handleRuntimeChange = (nextRuntime: RuntimeValue) => {
+    setRuntime(nextRuntime);
+    if (!customExecEdited) {
+      const nextPresets = presetsForRuntime(nextRuntime, activePort);
+      if (nextPresets[0]) {
+        setExecStart(nextPresets[0].cmd);
+      }
+    }
+  };
+
+  const handleSlotChange = (nextKey: string) => {
+    setPickedSlotKey(nextKey);
+    const nextSlot = portSites.find((s) => slotKey(s) === nextKey);
+    const nextPort = nextSlot?.upstream_port ?? 3000;
+    if (!customExecEdited) {
+      const nextPresets = presetsForRuntime(runtime, nextPort);
+      if (nextPresets[0]) {
+        setExecStart(nextPresets[0].cmd);
+      }
+    }
+  };
 
   // React 19 calls form.reset() after a successful server action. The DOM
   // resets all fields (the <select> snaps back to the first option), and
@@ -101,6 +224,7 @@ export default function DeployForm({
   // microtask so it lands after React's reset has finished.
   const formRef = useRef<HTMLFormElement>(null);
   const selectRef = useRef<HTMLSelectElement>(null);
+  const runtimeRef = useRef<HTMLSelectElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const repoUrlRef = useRef<HTMLInputElement>(null);
   const execStartRef = useRef<HTMLInputElement>(null);
@@ -112,6 +236,7 @@ export default function DeployForm({
       // DOM values, not the values we already had.
       queueMicrotask(() => {
         if (selectRef.current) selectRef.current.value = pickedSlotKey;
+        if (runtimeRef.current) runtimeRef.current.value = runtime;
         if (nameRef.current) nameRef.current.value = name;
         if (repoUrlRef.current) repoUrlRef.current.value = repoUrl;
         if (execStartRef.current) execStartRef.current.value = execStart;
@@ -119,7 +244,7 @@ export default function DeployForm({
     };
     form.addEventListener("reset", onReset);
     return () => form.removeEventListener("reset", onReset);
-  }, [pickedSlotKey, name, repoUrl, execStart]);
+  }, [pickedSlotKey, runtime, name, repoUrl, execStart]);
 
   // Probe the source folder whenever the name changes. Debounced so we don't
   // hammer the agent on every keystroke. Stale-result guarded via `cancelled`
@@ -235,7 +360,7 @@ export default function DeployForm({
             className={styles.select}
             required
             value={pickedSlotKey}
-            onChange={(e) => setPickedSlotKey(e.target.value)}
+            onChange={(e) => handleSlotChange(e.target.value)}
           >
             {portSites.map((s) => (
               <option
@@ -257,12 +382,9 @@ export default function DeployForm({
               /domains
             </Link>
             . Slots already bound to another app or a quick-install service
-            are not listed. The agent will skip nginx vhost creation — the site already
-            handles HTTP routing — and inject{" "}
+            are not listed. The agent skips nginx vhost creation and injects{" "}
             <span className={styles.code}>PORT={pickedSlot?.upstream_port ?? "?"}</span>{" "}
-            into the systemd unit so{" "}
-            <span className={styles.code}>app.listen(process.env.PORT)</span>{" "}
-            lands on this slot.
+            into the systemd unit so your app listens on this slot.
           </span>
         </label>
       </div>
@@ -311,10 +433,25 @@ export default function DeployForm({
           </span>
         </label>
         <label className={styles.field}>
-          Runtime
-          <select name="runtime" className={styles.select} defaultValue="node">
-            <option value="node">Node 20 LTS</option>
+          Runtime / Language
+          <select
+            ref={runtimeRef}
+            name="runtime"
+            className={styles.select}
+            value={runtime}
+            onChange={(e) => handleRuntimeChange(e.target.value as RuntimeValue)}
+          >
+            {RUNTIME_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
           </select>
+          <span className={styles.muted} style={{ fontSize: 12, marginTop: 4 }}>
+            Make sure the language runtime is installed via the 1-Click App
+            Store on <Link href="/apps" className={styles.code}>/apps</Link>{" "}
+            (Runtimes &amp; Languages tab).
+          </span>
         </label>
         <label className={styles.field}>
           Exec start
@@ -324,16 +461,44 @@ export default function DeployForm({
             className={styles.input}
             required
             value={execStart}
-            onChange={(e) => setExecStart(e.target.value)}
+            onChange={(e) => {
+              setExecStart(e.target.value);
+              setCustomExecEdited(true);
+            }}
           />
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+            {presets.map((p) => (
+              <button
+                key={p.label}
+                type="button"
+                onClick={() => {
+                  setExecStart(p.cmd);
+                  setCustomExecEdited(false);
+                }}
+                style={{
+                  background:
+                    execStart === p.cmd ? "var(--bg-elev-2)" : "transparent",
+                  border:
+                    execStart === p.cmd
+                      ? "1px solid var(--accent)"
+                      : "1px solid var(--border)",
+                  borderRadius: 4,
+                  padding: "2px 8px",
+                  fontFamily: "var(--mono)",
+                  fontSize: 11,
+                  cursor: "pointer",
+                  color: execStart === p.cmd ? "var(--accent)" : "var(--text-dim)",
+                }}
+                title={p.cmd}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
           <span className={styles.muted} style={{ fontSize: 12, marginTop: 4 }}>
-            Command the systemd unit runs from inside{" "}
-            <span className={styles.code}>{sourceDir}</span>. Leave as{" "}
-            <span className={styles.code}>/usr/bin/npm start</span> for a
-            standard Node app (runs the <span className={styles.code}>start</span>{" "}
-            script in your <span className={styles.code}>package.json</span>).
-            Override only for non-standard entrypoints, e.g.{" "}
-            <span className={styles.code}>/usr/bin/node dist/server.js</span>.
+            Command the systemd unit runs inside{" "}
+            <span className={styles.code}>{sourceDir}</span>. Click a preset
+            above or enter your own startup command.
           </span>
         </label>
       </div>
@@ -422,10 +587,11 @@ export default function DeployForm({
             )}
             <div style={{ marginTop: 8 }}>
               The agent clones into{" "}
-              <span className={styles.code}>{sourceDir}</span>, runs{" "}
-              <span className={styles.code}>npm ci</span> (or{" "}
-              <span className={styles.code}>npm install</span>), then starts
-              the unit — streamed live to the task log below.
+              <span className={styles.code}>{sourceDir}</span>, auto-detects and
+              installs dependencies (Node, Bun, Python{" "}
+              <span className={styles.code}>.venv</span>, PHP{" "}
+              <span className={styles.code}>composer</span>, Go, Ruby, Rust,
+              Java, .NET), builds, and starts the systemd unit.
             </div>
           </div>
         </label>
@@ -507,7 +673,7 @@ export default function DeployForm({
           className={styles.btnGhost}
           disabled={pending}
           onClick={() => { lastStepRef.current = "install"; }}
-          title="Run npm install / npm ci only"
+          title="Auto-detect and install dependencies (npm, bun, pip .venv, composer, go, bundle, cargo, maven, dotnet)"
         >
           {pending ? "..." : "Install"}
         </button>
@@ -518,7 +684,7 @@ export default function DeployForm({
           className={styles.btnGhost}
           disabled={pending}
           onClick={() => { lastStepRef.current = "build"; }}
-          title="Run npm run build (skipped if no build script)"
+          title="Run project build step (npm/bun build, cargo build --release, go build, mvn package, dotnet publish, etc.)"
         >
           {pending ? "..." : "Build"}
         </button>

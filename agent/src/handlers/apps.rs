@@ -695,27 +695,53 @@ async fn resolve_runtime(req: &CreateApp) -> AgentResult<&'static str> {
     let has_unit = PathBuf::from(format!("/etc/systemd/system/{VPS_APP_PREFIX}{}.service", req.name)).exists();
     let wanted = match req.runtime.as_deref() {
         None if is_docker => "docker",
-        None | Some("node") => "node",
+        None
+        | Some("node")
+        | Some("python")
+        | Some("php")
+        | Some("go")
+        | Some("bun")
+        | Some("deno")
+        | Some("ruby")
+        | Some("rust")
+        | Some("java")
+        | Some("dotnet")
+        | Some("custom") => "node",
         Some("docker") => "docker",
         Some(other) => {
             return Err(AgentError::Invalid(format!(
-                "unknown runtime {other:?} - expected node or docker"
+                "unknown runtime {other:?}"
             )))
         }
     };
     if wanted == "node" && is_docker {
         return Err(AgentError::Conflict(format!(
-            "{} is a Docker app - delete it first to deploy a Node app under that name",
+            "{} is a Docker app - delete it first to deploy a systemd app under that name",
             req.name
         )));
     }
     if wanted == "docker" && has_unit && !is_docker {
         return Err(AgentError::Conflict(format!(
-            "{} is a Node app - delete it first to deploy a Docker app under that name",
+            "{} is a systemd app - delete it first to deploy a Docker app under that name",
             req.name
         )));
     }
     Ok(wanted)
+}
+
+fn default_exec_start_for(runtime: Option<&str>, port: u16) -> String {
+    match runtime {
+        Some("python") => format!(".venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port {port}"),
+        Some("php") => format!("/usr/bin/php -S 127.0.0.1:{port} -t public"),
+        Some("go") => "./app".to_string(),
+        Some("bun") => "/usr/local/bin/bun run start".to_string(),
+        Some("deno") => "/usr/local/bin/deno task start".to_string(),
+        Some("ruby") => format!("/usr/bin/bundle exec rails server -b 127.0.0.1 -p {port}"),
+        Some("rust") => "./target/release/app".to_string(),
+        Some("java") => "/usr/bin/java -jar app.jar".to_string(),
+        Some("dotnet") => "/usr/bin/dotnet out/app.dll".to_string(),
+        _ => "/usr/bin/npm start".to_string(),
+    }
 }
 
 async fn run_deploy(
@@ -768,7 +794,7 @@ async fn run_deploy(
         None
     };
     let staged: AgentResult<()> = async {
-        // Stage 2: INSTALL — npm ci / npm install.
+        // Stage 2: INSTALL — auto-detect Node, Bun, Python, PHP, Go, Ruby, Rust.
         if do_install {
             let src = PathBuf::from(&req.source_dir);
             if !src.is_dir() {
@@ -777,45 +803,16 @@ async fn run_deploy(
                     req.source_dir
                 )));
             }
-            // Make the tree apps-owned BEFORE npm runs (run_npm drops to the apps
-            // user) so install lifecycle scripts can still write node_modules. The
-            // post-stage chown below is now a backstop.
             if cfg.apps_uid != 0 {
                 let _ = exec::run("chown", ["-R", "apps:apps", &req.source_dir]).await;
             }
-            if src.join("package-lock.json").is_file() {
-                task.log("installing deps (npm ci)");
-                run_npm(
-                    cfg,
-                    &["--prefix", &req.source_dir, "ci", "--no-audit", "--no-fund"],
-                    &[],
-                    task,
-                )
-                .await?;
-            } else if src.join("package.json").is_file() {
-                task.log("installing deps (npm install)");
-                run_npm(
-                    cfg,
-                    &[
-                        "--prefix",
-                        &req.source_dir,
-                        "install",
-                        "--no-audit",
-                        "--no-fund",
-                    ],
-                    &[],
-                    task,
-                )
-                .await?;
-            } else {
-                task.log("no package.json - skipping npm install");
-            }
+            run_project_install(cfg, &req.source_dir, req.runtime.as_deref(), task).await?;
             if cfg.apps_uid != 0 {
                 let _ = exec::run("chown", ["-R", "apps:apps", &req.source_dir]).await;
             }
         }
 
-        // Stage 3: BUILD — npm run build (only if a build script is defined).
+        // Stage 3: BUILD — auto-detect Node/Bun build, Go, Rust, Java, .NET.
         if do_build {
             let src = PathBuf::from(&req.source_dir);
             if !src.is_dir() {
@@ -824,35 +821,16 @@ async fn run_deploy(
                     req.source_dir
                 )));
             }
-            let pkg_path = src.join("package.json");
-            let mut has_build = false;
-            if let Ok(body) = tokio::fs::read_to_string(&pkg_path).await {
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
-                    has_build = json
-                        .get("scripts")
-                        .and_then(|s| s.get("build"))
-                        .and_then(|v| v.as_str())
-                        .is_some();
-                }
+            if cfg.apps_uid != 0 {
+                let _ = exec::run("chown", ["-R", "apps:apps", &req.source_dir]).await;
             }
-            if has_build {
-                task.log("running npm run build");
-                if cfg.apps_uid != 0 {
-                    let _ = exec::run("chown", ["-R", "apps:apps", &req.source_dir]).await;
-                }
-                // The app's variables reach the build: NEXT_PUBLIC_* and anything
-                // next.config reads are baked in at build time. The request's env
-                // when it carries one, else the env file already on disk.
-                let build_env: Vec<(String, String)> = match &req.env {
-                    Some(env) => env.iter().map(|kv| (kv.key.clone(), kv.value.clone())).collect(),
-                    None => build_env_for(&req.name).await,
-                };
-                run_npm(cfg, &["--prefix", &req.source_dir, "run", "build"], &build_env, task).await?;
-                if cfg.apps_uid != 0 {
-                    let _ = exec::run("chown", ["-R", "apps:apps", &req.source_dir]).await;
-                }
-            } else {
-                task.log("no `build` script in package.json - skipping build step");
+            let build_env: Vec<(String, String)> = match &req.env {
+                Some(env) => env.iter().map(|kv| (kv.key.clone(), kv.value.clone())).collect(),
+                None => build_env_for(&req.name).await,
+            };
+            run_project_build(cfg, &req.source_dir, req.runtime.as_deref(), &build_env, task).await?;
+            if cfg.apps_uid != 0 {
+                let _ = exec::run("chown", ["-R", "apps:apps", &req.source_dir]).await;
             }
         }
         Ok(())
@@ -902,7 +880,7 @@ async fn run_deploy(
         Some(s) => s.clone(),
         None => existing_exec_start(&unit_path)
             .await
-            .unwrap_or_else(|| "/usr/bin/npm start".to_string()),
+            .unwrap_or_else(|| default_exec_start_for(req.runtime.as_deref(), req.port)),
     };
 
     // A failure below removes the unit only if this deploy created it: on a
@@ -1355,38 +1333,227 @@ fn shell_quote(s: &str) -> String {
 /// so they cannot simply be inherited). Pass the app's variables for
 /// `npm run build`, nothing for install: a `NODE_ENV=production` in the app's
 /// env would make `npm ci` skip devDependencies the build needs.
+async fn run_shell_as_apps(
+    cfg: &crate::config::Config,
+    command_body: &str,
+    envs: &[(String, String)],
+    what: &str,
+    task: &crate::ipc::tasks::TaskHandle,
+) -> AgentResult<()> {
+    let mut script = String::from("umask 022 && export PATH=\"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$HOME/.deno/bin:$PATH\"");
+    for (key, value) in envs {
+        if is_valid_env_key(key) {
+            script.push_str(&format!(" && export {key}={}", shell_quote(value)));
+        }
+    }
+    script.push_str(" && ");
+    script.push_str(command_body);
+    if cfg.apps_uid == 0 {
+        return stream_subprocess("sh", ["-c", script.as_str()], what, NPM_STEP_LIMIT, task).await;
+    }
+    stream_subprocess(
+        "sudo",
+        ["-u", "apps", "-H", "sh", "-c", script.as_str()],
+        what,
+        NPM_STEP_LIMIT,
+        task,
+    )
+    .await
+}
+
 async fn run_npm(
     cfg: &crate::config::Config,
     args: &[&str],
     envs: &[(String, String)],
     task: &crate::ipc::tasks::TaskHandle,
 ) -> AgentResult<()> {
-    let mut script = String::from("umask 022");
-    for (key, value) in envs {
-        // Keys are re-checked because they are spliced into the script;
-        // values are single-quoted.
-        if is_valid_env_key(key) {
-            script.push_str(&format!(" && export {key}={}", shell_quote(value)));
+    let mut cmd = String::from("exec npm");
+    for arg in args {
+        cmd.push(' ');
+        cmd.push_str(&shell_quote(arg));
+    }
+    let what = format!("npm {}", npm_step_name(args));
+    run_shell_as_apps(cfg, &cmd, envs, &what, task).await
+}
+
+fn has_bun_binary() -> bool {
+    std::path::Path::new("/usr/local/bin/bun").is_file()
+        || std::path::Path::new("/usr/bin/bun").is_file()
+}
+
+fn has_file_with_ext(dir: &std::path::Path, ext: &str) -> bool {
+    std::fs::read_dir(dir)
+        .ok()
+        .map(|rd| {
+            rd.flatten()
+                .any(|e| e.path().extension().and_then(|s| s.to_str()) == Some(ext))
+        })
+        .unwrap_or(false)
+}
+
+async fn run_project_install(
+    cfg: &crate::config::Config,
+    source_dir: &str,
+    runtime_hint: Option<&str>,
+    task: &crate::ipc::tasks::TaskHandle,
+) -> AgentResult<()> {
+    let src = PathBuf::from(source_dir);
+    let qdir = shell_quote(source_dir);
+    let mut ran_any = false;
+
+    if (runtime_hint == Some("bun") || src.join("bun.lockb").is_file() || src.join("bun.lock").is_file())
+        && has_bun_binary()
+    {
+        ran_any = true;
+        task.log("installing deps (bun install)");
+        let cmd = format!("cd {qdir} && exec bun install");
+        run_shell_as_apps(cfg, &cmd, &[], "bun install", task).await?;
+    } else if src.join("package-lock.json").is_file() {
+        ran_any = true;
+        task.log("installing deps (npm ci)");
+        run_npm(cfg, &["--prefix", source_dir, "ci", "--no-audit", "--no-fund"], &[], task).await?;
+    } else if src.join("package.json").is_file() {
+        ran_any = true;
+        task.log("installing deps (npm install)");
+        run_npm(
+            cfg,
+            &["--prefix", source_dir, "install", "--no-audit", "--no-fund"],
+            &[],
+            task,
+        )
+        .await?;
+    }
+
+    if src.join("requirements.txt").is_file() {
+        ran_any = true;
+        task.log("creating Python .venv and installing requirements.txt");
+        let cmd = format!(
+            "cd {qdir} && ([ -x .venv/bin/python ] || python3 -m venv .venv) && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -r requirements.txt"
+        );
+        run_shell_as_apps(cfg, &cmd, &[], "pip install", task).await?;
+    } else if src.join("pyproject.toml").is_file() {
+        ran_any = true;
+        task.log("creating Python .venv and installing pyproject.toml");
+        let cmd = format!(
+            "cd {qdir} && ([ -x .venv/bin/python ] || python3 -m venv .venv) && .venv/bin/pip install --upgrade pip && .venv/bin/pip install ."
+        );
+        run_shell_as_apps(cfg, &cmd, &[], "pip install", task).await?;
+    }
+
+    if src.join("composer.json").is_file() {
+        ran_any = true;
+        task.log("installing PHP dependencies (composer install)");
+        let cmd = format!(
+            "cd {qdir} && exec composer install --no-dev --optimize-autoloader --no-interaction"
+        );
+        run_shell_as_apps(cfg, &cmd, &[], "composer install", task).await?;
+    }
+
+    if src.join("go.mod").is_file() {
+        ran_any = true;
+        task.log("downloading Go modules (go mod download)");
+        let cmd = format!("cd {qdir} && exec go mod download");
+        run_shell_as_apps(cfg, &cmd, &[], "go mod download", task).await?;
+    }
+
+    if src.join("Gemfile").is_file() {
+        ran_any = true;
+        task.log("installing Ruby gems (bundle install)");
+        let cmd = format!("cd {qdir} && exec bundle install");
+        run_shell_as_apps(cfg, &cmd, &[], "bundle install", task).await?;
+    }
+
+    if src.join("Cargo.toml").is_file() {
+        ran_any = true;
+        task.log("fetching Rust crates (cargo fetch)");
+        let cmd = format!("cd {qdir} && exec cargo fetch");
+        run_shell_as_apps(cfg, &cmd, &[], "cargo fetch", task).await?;
+    }
+
+    if !ran_any {
+        task.log("no dependency manifest found (package.json, requirements.txt, pyproject.toml, composer.json, go.mod, Gemfile, Cargo.toml) - skipping install");
+    }
+    Ok(())
+}
+
+async fn run_project_build(
+    cfg: &crate::config::Config,
+    source_dir: &str,
+    runtime_hint: Option<&str>,
+    build_env: &[(String, String)],
+    task: &crate::ipc::tasks::TaskHandle,
+) -> AgentResult<()> {
+    let src = PathBuf::from(source_dir);
+    let qdir = shell_quote(source_dir);
+    let mut ran_any = false;
+
+    let pkg_path = src.join("package.json");
+    let has_js_build = match tokio::fs::read_to_string(&pkg_path).await {
+        Ok(body) => serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|j| {
+                j.get("scripts")
+                    .and_then(|s| s.get("build"))
+                    .and_then(|v| v.as_str())
+                    .map(|_| ())
+            })
+            .is_some(),
+        Err(_) => false,
+    };
+
+    if has_js_build {
+        ran_any = true;
+        if (runtime_hint == Some("bun") || src.join("bun.lockb").is_file() || src.join("bun.lock").is_file())
+            && has_bun_binary()
+        {
+            task.log("running bun run build");
+            let cmd = format!("cd {qdir} && exec bun run build");
+            run_shell_as_apps(cfg, &cmd, build_env, "bun run build", task).await?;
+        } else {
+            task.log("running npm run build");
+            run_npm(cfg, &["--prefix", source_dir, "run", "build"], build_env, task).await?;
         }
     }
-    script.push_str(" && exec npm");
-    for arg in args {
-        script.push(' ');
-        script.push_str(&shell_quote(arg));
+
+    if src.join("go.mod").is_file() {
+        ran_any = true;
+        task.log("building Go binary (go build -o app .)");
+        let cmd = format!("cd {qdir} && exec go build -o app .");
+        run_shell_as_apps(cfg, &cmd, build_env, "go build", task).await?;
     }
-    // "npm ci", "npm run build": the arguments after `--prefix <dir>`.
-    let what = format!("npm {}", npm_step_name(args));
-    if cfg.apps_uid == 0 {
-        return stream_subprocess("sh", ["-c", script.as_str()], &what, NPM_STEP_LIMIT, task).await;
+
+    if src.join("Cargo.toml").is_file() {
+        ran_any = true;
+        task.log("building Rust release binary (cargo build --release)");
+        let cmd = format!("cd {qdir} && exec cargo build --release");
+        run_shell_as_apps(cfg, &cmd, build_env, "cargo build", task).await?;
     }
-    stream_subprocess(
-        "sudo",
-        ["-u", "apps", "-H", "sh", "-c", script.as_str()],
-        &what,
-        NPM_STEP_LIMIT,
-        task,
-    )
-    .await
+
+    if src.join("pom.xml").is_file() {
+        ran_any = true;
+        let mvn = if src.join("mvnw").is_file() { "./mvnw" } else { "mvn" };
+        task.log(format!("building Java Maven package ({mvn} -B package -DskipTests)"));
+        let cmd = format!("cd {qdir} && exec {mvn} -B package -DskipTests");
+        run_shell_as_apps(cfg, &cmd, build_env, "maven build", task).await?;
+    } else if src.join("build.gradle").is_file() || src.join("build.gradle.kts").is_file() {
+        ran_any = true;
+        let gradle = if src.join("gradlew").is_file() { "./gradlew" } else { "gradle" };
+        task.log(format!("building Java Gradle project ({gradle} build -x test)"));
+        let cmd = format!("cd {qdir} && exec {gradle} build -x test");
+        run_shell_as_apps(cfg, &cmd, build_env, "gradle build", task).await?;
+    }
+
+    if has_file_with_ext(&src, "csproj") {
+        ran_any = true;
+        task.log("publishing .NET app (dotnet publish -c Release -o out)");
+        let cmd = format!("cd {qdir} && exec dotnet publish -c Release -o out");
+        run_shell_as_apps(cfg, &cmd, build_env, "dotnet publish", task).await?;
+    }
+
+    if !ran_any {
+        task.log("no build step required for this project - skipping build");
+    }
+    Ok(())
 }
 
 /// `["--prefix", dir, "run", "build"]` -> `run build`; options are left out.
@@ -1577,7 +1744,16 @@ pub(crate) async fn log_journal_tail(unit: &str, lines: u32, task: &crate::ipc::
 /// node_modules up front and build tools (next build, vite, CRA, nuxt) empty
 /// their output directory before writing, so a failed install or build used to
 /// leave the live app with nothing to start from on its next restart.
-const RUNTIME_ARTIFACT_DIRS: &[&str] = &["node_modules", ".next", ".output", "dist", "build", "out"];
+const RUNTIME_ARTIFACT_DIRS: &[&str] = &[
+    "node_modules",
+    ".venv",
+    "vendor",
+    ".next",
+    ".output",
+    "dist",
+    "build",
+    "out",
+];
 
 /// Outside every source tree on purpose: a copy inside the project (say
 /// `node_modules.prev`) would be crawled by tsc, eslint and tailwind during the
@@ -2251,67 +2427,24 @@ pub(crate) async fn pull_checkout(
     Ok(())
 }
 
-/// npm ci (preferred when package-lock.json exists) or npm install, then
-/// `npm run build` when package.json defines one.
+/// Install dependencies and build across supported runtimes (Node, Bun,
+/// Python, PHP, Go, Ruby, Rust, Java, .NET).
 async fn install_and_build(
     cfg: &crate::config::Config,
     source_dir: &str,
     build_env: &[(String, String)],
     task: &crate::ipc::tasks::TaskHandle,
 ) -> AgentResult<()> {
-    let src = PathBuf::from(source_dir);
-    if src.join("package-lock.json").is_file() {
-        task.log("installing deps (npm ci)");
-        run_npm(
-            cfg,
-            &["--prefix", source_dir, "ci", "--no-audit", "--no-fund"],
-            &[],
-            task,
-        )
-        .await?;
-    } else if src.join("package.json").is_file() {
-        task.log("installing deps (npm install)");
-        run_npm(
-            cfg,
-            &[
-                "--prefix",
-                source_dir,
-                "install",
-                "--no-audit",
-                "--no-fund",
-            ],
-            &[],
-            task,
-        )
-        .await?;
-    } else {
-        task.log("no package.json - skipping npm install");
-    }
     if cfg.apps_uid != 0 {
         let _ = exec::run("chown", ["-R", "apps:apps", source_dir]).await;
     }
-
-    let pkg_path = src.join("package.json");
-    let has_build = match tokio::fs::read_to_string(&pkg_path).await {
-        Ok(body) => serde_json::from_str::<serde_json::Value>(&body)
-            .ok()
-            .and_then(|j| {
-                j.get("scripts")
-                    .and_then(|s| s.get("build"))
-                    .and_then(|v| v.as_str())
-                    .map(|_| ())
-            })
-            .is_some(),
-        Err(_) => false,
-    };
-    if has_build {
-        task.log("running npm run build");
-        run_npm(cfg, &["--prefix", source_dir, "run", "build"], build_env, task).await?;
-        if cfg.apps_uid != 0 {
-            let _ = exec::run("chown", ["-R", "apps:apps", source_dir]).await;
-        }
-    } else {
-        task.log("no `build` script in package.json - skipping build");
+    run_project_install(cfg, source_dir, None, task).await?;
+    if cfg.apps_uid != 0 {
+        let _ = exec::run("chown", ["-R", "apps:apps", source_dir]).await;
+    }
+    run_project_build(cfg, source_dir, None, build_env, task).await?;
+    if cfg.apps_uid != 0 {
+        let _ = exec::run("chown", ["-R", "apps:apps", source_dir]).await;
     }
     Ok(())
 }

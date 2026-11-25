@@ -123,6 +123,42 @@ export default function ServiceIcon({ slug, size = 36 }: Props) {
       return <ItToolsMark size={size} />;
     case "stirlingpdf":
       return <StirlingPdfMark size={size} />;
+    case "nodejs":
+      return <NodeJsMark size={size} />;
+    case "python":
+      return <PythonMark size={size} />;
+    case "php":
+      return <PhpMark size={size} />;
+    case "golang":
+      return <GoMark size={size} />;
+    case "java":
+      return <JavaMark size={size} />;
+    case "ruby":
+      return <RubyMark size={size} />;
+    case "rust":
+      return <RustMark size={size} />;
+    case "bun":
+      return <BunMark size={size} />;
+    case "deno":
+      return <DenoMark size={size} />;
+    case "dotnet":
+      return <DotnetMark size={size} />;
+    case "pm2":
+      return <Pm2Mark size={size} />;
+    case "supervisor":
+      return <SupervisorMark size={size} />;
+    case "codeserver":
+      return <CodeServerMark size={size} />;
+    case "mailpit":
+      return <MailpitMark size={size} />;
+    case "pocketbase":
+      return <PocketBaseMark size={size} />;
+    case "syncthing":
+      return <SyncthingMark size={size} />;
+    case "homepage":
+      return <HomepageMark size={size} />;
+    case "dockerregistry":
+      return <DockerRegistryMark size={size} />;
     default:
       return <Cylinder size={size} color="var(--text-dim)" />;
   }
@@ -724,6 +760,205 @@ function StirlingPdfMark({ size }: { size: number }) {
       <path d="M8 4h11l5 5v19H8V4z" stroke={color} strokeWidth="2" strokeLinejoin="round" />
       <path d="M19 4v5h5" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
       <path d="M11 19h10M11 23h7" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function NodeJsMark({ size }: { size: number }) {
+  const color = "#5fa04e";
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <polygon points="16,3.5 27,9.5 27,22.5 16,28.5 5,22.5 5,9.5" stroke={color} strokeWidth="2" strokeLinejoin="round" />
+      <path d="M11.5 20.5v-9l9 9v-9" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function PythonMark({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <path d="M16 5c-4.5 0-4.5 2-4.5 4v2.5h9v1.5H9c-2.5 0-4.5 1.8-4.5 4.8s2 4.7 4.5 4.7h2V19c0-2 1.5-3.5 3.5-3.5h5c1.7 0 3-1.3 3-3V9c0-2-2-4-6.5-4z" stroke="#3776ab" strokeWidth="1.8" strokeLinejoin="round" />
+      <path d="M16 27c4.5 0 4.5-2 4.5-4v-2.5h-9V19H23c2.5 0 4.5-1.8 4.5-4.8s-2-4.7-4.5-4.7h-2V13c0 2-1.5 3.5-3.5 3.5h-5c-1.7 0-3 1.3-3 3V23c0 2 2 4 6.5 4z" stroke="#ffd343" strokeWidth="1.8" strokeLinejoin="round" />
+      <circle cx="13.5" cy="8.5" r="1" fill="#3776ab" />
+      <circle cx="18.5" cy="23.5" r="1" fill="#ffd343" />
+    </svg>
+  );
+}
+
+function PhpMark({ size }: { size: number }) {
+  const color = "#777bb4";
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <ellipse cx="16" cy="16" rx="13" ry="8" stroke={color} strokeWidth="2" />
+      <path d="M8.5 19v-6h2.2a1.7 1.7 0 010 3.4H8.5M14 19v-6M14 16h3.5M17.5 13v6M21 19v-6h2.2a1.7 1.7 0 010 3.4H21" stroke={color} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function GoMark({ size }: { size: number }) {
+  const color = "#00add8";
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <path d="M15 11.5a5.5 5.5 0 10-1 8.5h-3v-3h4" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <ellipse cx="22.5" cy="16" rx="4.5" ry="5.2" stroke={color} strokeWidth="2" />
+      <path d="M5 13h4M4 16h3" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function JavaMark({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <path d="M9 17h12v4a5 5 0 01-5 5h-2a5 5 0 01-5-5v-4z" stroke="#f89820" strokeWidth="2" strokeLinejoin="round" />
+      <path d="M21 18h2.5a2 2 0 010 4H21" stroke="#f89820" strokeWidth="1.8" />
+      <path d="M13 13c0-2 2-2.5 2-4.5M17 13c0-2 2-2.5 2-4.5" stroke="#5382a1" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function RubyMark({ size }: { size: number }) {
+  const color = "#cc342d";
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <polygon points="9,7 23,7 28,13 16,26 4,13" stroke={color} strokeWidth="2" strokeLinejoin="round" />
+      <path d="M4 13h24M9 7l3 6 4 13 4-13 3-6" stroke={color} strokeWidth="1.4" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function RustMark({ size }: { size: number }) {
+  const color = "#dea584";
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <circle cx="16" cy="16" r="9.5" stroke={color} strokeWidth="2" strokeDasharray="3 2" />
+      <path d="M12 21V11h5a3 3 0 010 6h-5M16 17l4 4" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function BunMark({ size }: { size: number }) {
+  const color = "#fbf0df";
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <ellipse cx="16" cy="17.5" rx="11" ry="8" stroke={color} strokeWidth="2" />
+      <path d="M12 10.5c1.5-2 6.5-2 8 0" stroke="#f472b6" strokeWidth="1.8" strokeLinecap="round" />
+      <circle cx="12.5" cy="16.5" r="1.3" fill={color} />
+      <circle cx="19.5" cy="16.5" r="1.3" fill={color} />
+      <path d="M14.5 19.5c1 .8 2 .8 3 0" stroke="#f472b6" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function DenoMark({ size }: { size: number }) {
+  const color = "#70ffaf";
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <circle cx="16" cy="16" r="11.5" stroke={color} strokeWidth="2" />
+      <path d="M12 24v-6a4.5 4.5 0 019 0v1.5H17" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="17.5" cy="13.5" r="1.1" fill={color} />
+    </svg>
+  );
+}
+
+function DotnetMark({ size }: { size: number }) {
+  const color = "#a78bfa";
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <rect x="4" y="7" width="24" height="18" rx="3" stroke={color} strokeWidth="2" />
+      <circle cx="9.5" cy="19" r="1.4" fill={color} />
+      <path d="M13 20v-8l5 8v-8M21 12h4M23 12v8" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function Pm2Mark({ size }: { size: number }) {
+  const color = "#38bdf8";
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <rect x="4" y="6" width="24" height="20" rx="3" stroke={color} strokeWidth="2" />
+      <path d="M8 20v-7h3a2 2 0 010 4H8M15 20v-7l2.5 4 2.5-4v7M23 14.5a2 2 0 012 2c0 1.5-2.5 2-2.5 3.5H25" stroke={color} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function SupervisorMark({ size }: { size: number }) {
+  const color = "#fb923c";
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <rect x="5" y="6" width="22" height="6" rx="1.5" stroke={color} strokeWidth="1.8" />
+      <rect x="5" y="14" width="22" height="6" rx="1.5" stroke={color} strokeWidth="1.8" />
+      <rect x="5" y="22" width="22" height="5" rx="1.5" stroke={color} strokeWidth="1.8" opacity="0.7" />
+      <circle cx="9" cy="9" r="1.2" fill="#4ade80" />
+      <circle cx="9" cy="17" r="1.2" fill="#4ade80" />
+    </svg>
+  );
+}
+
+function CodeServerMark({ size }: { size: number }) {
+  const color = "#007acc";
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <path d="M23 5l5 2.5v17L23 27l-13-11 13-11z" stroke={color} strokeWidth="2" strokeLinejoin="round" />
+      <path d="M5 11l18 16M5 21L23 5" stroke={color} strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function MailpitMark({ size }: { size: number }) {
+  const color = "#fb7185";
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <rect x="4" y="8" width="24" height="16" rx="2.5" stroke={color} strokeWidth="2" />
+      <path d="M4 10l12 8 12-8" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="24" cy="9" r="3" fill="#4ade80" />
+    </svg>
+  );
+}
+
+function PocketBaseMark({ size }: { size: number }) {
+  const color = "#b8d0eb";
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <path d="M5 8a2 2 0 012-2h18a2 2 0 012 2v10c0 5-5 8-11 8S5 23 5 18V8z" stroke={color} strokeWidth="2" strokeLinejoin="round" />
+      <path d="M12 13v8M12 13h4a2.5 2.5 0 010 5h-4" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function SyncthingMark({ size }: { size: number }) {
+  const color = "#26b6db";
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <circle cx="16" cy="16" r="11" stroke={color} strokeWidth="2" />
+      <circle cx="16" cy="16" r="2.2" fill={color} />
+      <circle cx="9" cy="12" r="2" fill={color} />
+      <circle cx="23" cy="11" r="2" fill={color} />
+      <circle cx="21" cy="23" r="2" fill={color} />
+      <path d="M10.5 13l4 2M21.5 12l-4 3M19.8 21.3L17 17.5" stroke={color} strokeWidth="1.6" />
+    </svg>
+  );
+}
+
+function HomepageMark({ size }: { size: number }) {
+  const color = "#38bdf8";
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <rect x="5" y="6" width="9" height="9" rx="2" stroke={color} strokeWidth="2" />
+      <rect x="18" y="6" width="9" height="9" rx="2" stroke={color} strokeWidth="2" />
+      <rect x="5" y="18" width="9" height="8" rx="2" stroke={color} strokeWidth="2" />
+      <rect x="18" y="18" width="9" height="8" rx="2" stroke={color} strokeWidth="2" opacity="0.65" />
+    </svg>
+  );
+}
+
+function DockerRegistryMark({ size }: { size: number }) {
+  const color = "#60a5fa";
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <rect x="5" y="6" width="22" height="6" rx="1.5" stroke={color} strokeWidth="1.8" />
+      <rect x="5" y="14" width="22" height="6" rx="1.5" stroke={color} strokeWidth="1.8" />
+      <rect x="5" y="22" width="22" height="5" rx="1.5" stroke={color} strokeWidth="1.8" />
+      <path d="M21 9h3M21 17h3" stroke={color} strokeWidth="1.8" strokeLinecap="round" />
     </svg>
   );
 }

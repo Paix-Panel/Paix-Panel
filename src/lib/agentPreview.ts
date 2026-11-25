@@ -321,6 +321,18 @@ function getState(): PreviewState {
       },
     ],
     quickInstall: [
+      { slug: "nodejs", name: "Node.js 22 LTS", description: "Node.js 22 LTS runtime + npm + PM2 process manager.", default_port: 0, category: "Runtimes & Languages", installed: true, web_ui: false, bind: null, update_available: null },
+      { slug: "python", name: "Python 3 + pip", description: "Python 3 runtime, pip, venv & C build toolchain for FastAPI, Django & AI apps.", default_port: 0, category: "Runtimes & Languages", installed: true, web_ui: false, bind: null, update_available: null },
+      { slug: "php", name: "PHP + Composer", description: "PHP CLI/FPM with MySQL, Postgres, curl, mbstring, xml, zip & Composer.", default_port: 0, category: "Runtimes & Languages", installed: false, web_ui: false, bind: null, update_available: null },
+      { slug: "golang", name: "Go (Golang)", description: "Go compiler & toolchain for high-throughput APIs and microservices.", default_port: 0, category: "Runtimes & Languages", installed: false, web_ui: false, bind: null, update_available: null },
+      { slug: "java", name: "Java 21 JDK", description: "OpenJDK 21 & Maven for Spring Boot, Kotlin & enterprise JVM apps.", default_port: 0, category: "Runtimes & Languages", installed: false, web_ui: false, bind: null, update_available: null },
+      { slug: "ruby", name: "Ruby + Bundler", description: "Ruby runtime & Bundler for Ruby on Rails, Sinatra & Jekyll apps.", default_port: 0, category: "Runtimes & Languages", installed: false, web_ui: false, bind: null, update_available: null },
+      { slug: "rust", name: "Rust + Cargo", description: "Rust compiler & Cargo toolchain for ultra-fast native binaries.", default_port: 0, category: "Runtimes & Languages", installed: false, web_ui: false, bind: null, update_available: null },
+      { slug: "bun", name: "Bun Runtime", description: "Ultra-fast all-in-one JavaScript & TypeScript runtime and bundler.", default_port: 0, category: "Runtimes & Languages", installed: false, web_ui: false, bind: null, update_available: null },
+      { slug: "deno", name: "Deno 2", description: "Secure TypeScript & JavaScript runtime with built-in toolchain.", default_port: 0, category: "Runtimes & Languages", installed: false, web_ui: false, bind: null, update_available: null },
+      { slug: "dotnet", name: ".NET 8 SDK", description: "Microsoft .NET 8 SDK & ASP.NET Core runtime for C# and F# apps.", default_port: 0, category: "Runtimes & Languages", installed: false, web_ui: false, bind: null, update_available: null },
+      { slug: "pm2", name: "PM2 Manager", description: "Production process manager with cluster mode & auto-restart for Node/Bun/Python.", default_port: 0, category: "Runtimes & Languages", installed: true, web_ui: false, bind: null, update_available: null },
+      { slug: "supervisor", name: "Supervisor", description: "Process control daemon for background workers, queues & custom services.", default_port: 0, category: "Runtimes & Languages", installed: false, web_ui: false, bind: null, update_available: null },
       { slug: "wordpress", name: "WordPress", description: "World's #1 CMS, blogs & WooCommerce e-commerce store. Auto-wired to host MariaDB.", default_port: 8092, category: "Web & CMS", installed: false, web_ui: true, bind: null, update_available: null },
       { slug: "ghost", name: "Ghost CMS", description: "Fast publishing platform for modern blogs, memberships & newsletters.", default_port: 2368, category: "Web & CMS", installed: false, web_ui: true, bind: null, update_available: null },
       { slug: "directus", name: "Directus", description: "Headless CMS & instant REST/GraphQL data studio.", default_port: 8055, category: "Web & CMS", installed: false, web_ui: true, bind: null, update_available: null },
@@ -335,6 +347,8 @@ function getState(): PreviewState {
       { slug: "jellyfin", name: "Jellyfin", description: "Self-hosted media streaming server for movies, music & live TV.", default_port: 8096, category: "Cloud & Productivity", installed: false, web_ui: true, bind: null, update_available: null },
       { slug: "memos", name: "Memos", description: "Fast, privacy-first note taking and lightweight knowledge hub.", default_port: 5230, category: "Cloud & Productivity", installed: false, web_ui: true, bind: null, update_available: null },
       { slug: "stirlingpdf", name: "Stirling PDF", description: "All-in-one PDF tools: merge, split, compress, OCR & convert.", default_port: 8094, category: "Cloud & Productivity", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "syncthing", name: "Syncthing", description: "Continuous encrypted peer-to-peer file synchronization across servers & devices.", default_port: 8384, category: "Cloud & Productivity", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "homepage", name: "Homepage", description: "Modern customizable startpage & server service status dashboard.", default_port: 3016, category: "Cloud & Productivity", installed: false, web_ui: true, bind: null, update_available: null },
       { slug: "roundcube", name: "Roundcube Webmail", description: "Browser webmail client wired to Postfix and Dovecot.", default_port: 8082, category: "Cloud & Productivity", installed: true, web_ui: false, bind: null, update_available: null },
       { slug: "gitea", name: "Gitea", description: "Lightweight self-hosted GitHub / Git repositories & CI/CD (HTTP 3012, SSH 2222).", default_port: 3012, category: "DevOps & Monitoring", installed: false, web_ui: true, bind: null, update_available: null },
       { slug: "portainer", name: "Portainer CE", description: "Visual web UI to manage Docker containers, stacks, images & volumes.", default_port: 9005, category: "DevOps & Monitoring", installed: false, web_ui: true, bind: null, update_available: null },
@@ -343,10 +357,13 @@ function getState(): PreviewState {
       { slug: "prometheus", name: "Prometheus", description: "High-performance time-series metrics collection & alerting engine.", default_port: 9090, category: "DevOps & Monitoring", installed: false, web_ui: true, bind: null, update_available: null },
       { slug: "dozzle", name: "Dozzle", description: "Lightweight real-time Docker container log viewer.", default_port: 8091, category: "DevOps & Monitoring", installed: false, web_ui: true, bind: null, update_available: null },
       { slug: "ittools", name: "IT-Tools", description: "Collection of 70+ handy developer & sysadmin utilities.", default_port: 8093, category: "DevOps & Monitoring", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "codeserver", name: "VS Code Server", description: "Full Visual Studio Code IDE in your browser for editing /srv/apps directly.", default_port: 8443, category: "DevOps & Monitoring", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "mailpit", name: "Mailpit", description: "Fast local email testing sandbox & SMTP catch-all web UI (UI 8025 / SMTP 1025).", default_port: 8025, category: "DevOps & Monitoring", installed: false, web_ui: true, bind: null, update_available: null },
       { slug: "metabase", name: "Metabase BI", description: "Self-service business intelligence, charts & SQL analytics dashboards.", default_port: 3013, category: "Databases & Cache", installed: false, web_ui: true, bind: null, update_available: null },
       { slug: "mongodb", name: "MongoDB 7", description: "High-scale NoSQL JSON document database (Docker, port 27017).", default_port: 27017, category: "Databases & Cache", installed: false, web_ui: false, bind: null, update_available: null },
       { slug: "rabbitmq", name: "RabbitMQ", description: "Enterprise message broker & job queue with Management UI (15672 / 5672).", default_port: 15672, category: "Databases & Cache", installed: false, web_ui: true, bind: null, update_available: null },
       { slug: "adminer", name: "Adminer", description: "Universal lightweight SQL UI for MariaDB, PostgreSQL & SQLite.", default_port: 8095, category: "Databases & Cache", installed: false, web_ui: true, bind: null, update_available: null },
+      { slug: "pocketbase", name: "PocketBase", description: "All-in-one SQLite backend, realtime API, auth & file storage in 1 binary.", default_port: 8090, category: "Databases & Cache", installed: false, web_ui: true, bind: null, update_available: null },
       { slug: "mariadb", name: "MariaDB", description: "Drop-in MySQL replacement (community fork). Listens on 3306.", default_port: 3306, category: "Databases & Cache", installed: true, web_ui: false, bind: "127.0.0.1", update_available: null },
       { slug: "postgresql", name: "PostgreSQL", description: "Reliable relational database with rich SQL support. Listens on 5432.", default_port: 5432, category: "Databases & Cache", installed: true, web_ui: false, bind: "127.0.0.1", update_available: null },
       { slug: "pgvector", name: "pgvector", description: "PostgreSQL extension for vector similarity search / embeddings.", default_port: 0, category: "Databases & Cache", installed: false, web_ui: false, bind: null, update_available: null },
@@ -363,6 +380,7 @@ function getState(): PreviewState {
       { slug: "nginx", name: "Nginx", description: "HTTP server and reverse proxy. Listens on 80/443.", default_port: 80, category: "Infrastructure", installed: true, web_ui: false, bind: null, update_available: null },
       { slug: "k3s", name: "K3s Cluster", description: "Lightweight CNCF Kubernetes control plane for multi-server horizontal scaling.", default_port: 6443, category: "Infrastructure", installed: false, web_ui: false, bind: null, update_available: null },
       { slug: "tailscale", name: "Tailscale", description: "Zero-config private mesh VPN for server access.", default_port: 0, category: "Infrastructure", installed: false, web_ui: false, bind: null, update_available: null },
+      { slug: "dockerregistry", name: "Docker Registry", description: "Private self-hosted OCI Docker image registry on port 5000.", default_port: 5000, category: "Infrastructure", installed: false, web_ui: false, bind: null, update_available: null },
     ],
     hostname: os.hostname() || "ubuntu-vps-01",
     swapMb: 2048,
@@ -620,7 +638,7 @@ export async function handlePreviewAgentRequest<T>(
     const name = String(b.name ?? "new-app");
     const port = Number(b.port ?? 4010);
     const subdomain = String(b.subdomain ?? "");
-    const runtime = b.runtime === "docker" ? "docker" : "node";
+    const runtime = String(b.runtime || "node");
     s.apps.push({
       name,
       subdomain,

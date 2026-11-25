@@ -286,7 +286,7 @@ export default async function AppsPage() {
         <div>
           <h1 className={styles.title}>Apps</h1>
           <div className={styles.subtitle}>
-            Node.js apps and Docker images, managed by systemd, served by nginx.
+            Node.js, Python, PHP, Go, Bun, Rust, Java, Ruby, .NET &amp; Docker apps — managed by systemd, served by nginx.
           </div>
           <AutoUpdateCheckToggle
             enabled={autoCheck}

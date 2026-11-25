@@ -1470,7 +1470,7 @@ export type AppRow = {
    *  "populated" → exists with code
    *  "none"    → a Docker app, which has no source folder */
   source_dir_state: "missing" | "empty" | "populated" | "none";
-  runtime: "node" | "docker";
+  runtime: string;
   /** Docker apps from a registry: the image they run, as entered. */
   image: string | null;
   /** A Docker app built from the Dockerfile in its Git checkout. */

@@ -10,6 +10,7 @@ import {
   resolveRequestOrigin,
   verifySignedOAuthState,
 } from "@/lib/googleAuth";
+import { contentSecurityPolicy, newNonce } from "@/lib/csp";
 import { cookies } from "next/headers";
 
 export const runtime = "nodejs";
@@ -32,23 +33,19 @@ function popupResultHtml(opts: {
   error?: string;
   targetOrigin: string;
 }): NextResponse {
+  const nonce = newNonce();
   const safeRedirect =
     typeof opts.redirectTo === "string" &&
     opts.redirectTo.startsWith("/") &&
     !opts.redirectTo.startsWith("//")
       ? opts.redirectTo
       : "/dashboard";
-  const metaPayload = JSON.stringify({
-    data: opts.ok
+  const payload = JSON.stringify(
+    opts.ok
       ? { type: "GOOGLE_OAUTH_SUCCESS", redirectTo: safeRedirect }
       : { type: "GOOGLE_OAUTH_ERROR", error: opts.error ?? "Google sign-in failed" },
-    targetOrigin: opts.targetOrigin || "*",
-  });
-  const escapedMetaPayload = metaPayload
-    .replaceAll("&", "&amp;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
+  );
+  const safeTargetOrigin = JSON.stringify(opts.targetOrigin || "*");
   const statusText = opts.ok
     ? "Signed in. Returning to your panel..."
     : (opts.error ?? "Sign in denied.");
@@ -61,7 +58,6 @@ function popupResultHtml(opts: {
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="oauth-result" content="${escapedMetaPayload}" />
   <title>Google Sign-In</title>
   <style>
     body {
@@ -104,7 +100,63 @@ function popupResultHtml(opts: {
     <p class="msg">${safeEscapedStatus}</p>
     ${opts.ok ? "" : '<button id="close-btn" type="button" class="btn">Close window</button>'}
   </div>
-  <script src="/api/auth/google/callback/script" defer></script>
+  <script nonce="${nonce}">
+    (function () {
+      var closeBtn = document.getElementById("close-btn");
+      if (closeBtn) {
+        closeBtn.addEventListener("click", function () {
+          try { window.close(); } catch (e) {}
+        });
+      }
+
+      var data = ${payload};
+      var targetOrigin = ${safeTargetOrigin};
+
+      try {
+        if (window.opener && !window.opener.closed) {
+          window.opener.postMessage(data, targetOrigin);
+          if (targetOrigin !== "*") {
+            window.opener.postMessage(data, "*");
+          }
+        }
+      } catch (e) {}
+
+      try {
+        if (typeof BroadcastChannel !== "undefined") {
+          var ch = new BroadcastChannel("paix_google_oauth");
+          ch.postMessage(data);
+          ch.close();
+        }
+      } catch (e) {}
+
+      try {
+        localStorage.setItem(
+          "paix_google_oauth_result",
+          JSON.stringify({
+            type: data.type,
+            redirectTo: data.redirectTo,
+            error: data.error,
+            ts: Date.now()
+          })
+        );
+      } catch (e) {}
+
+      if (data.type === "GOOGLE_OAUTH_SUCCESS") {
+        var dest = ${JSON.stringify(safeRedirect)};
+        function tryClose() {
+          try { window.close(); } catch (e) {}
+        }
+        tryClose();
+        setTimeout(tryClose, 100);
+        setTimeout(tryClose, 300);
+        setTimeout(function () {
+          if (!window.closed) {
+            window.location.replace(dest);
+          }
+        }, 800);
+      }
+    })();
+  </script>
 </body>
 </html>`;
 
@@ -113,6 +165,7 @@ function popupResultHtml(opts: {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",
+      "Content-Security-Policy": contentSecurityPolicy(nonce),
     },
   });
 }

@@ -54,6 +54,7 @@ export default function LoginForm({
   const [showPassword, setShowPassword] = useState(false);
   const [remember, setRemember] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
+  const [oauthWatching, setOauthWatching] = useState(false);
   const [googleError, setGoogleError] = useState<string | null>(null);
   const [googleAuthUrl, setGoogleAuthUrl] = useState<string | null>(null);
   const popupRef = useRef<Window | null>(null);
@@ -99,6 +100,7 @@ export default function LoginForm({
       // ignore storage errors
     }
     setGoogleBusy(false);
+    setOauthWatching(false);
     setGoogleError(null);
     window.location.replace(safeRedirectTarget(redirectTo));
   }, []);
@@ -110,6 +112,7 @@ export default function LoginForm({
         finishGoogleSuccess(data.redirectTo);
       } else if (data.type === "GOOGLE_OAUTH_ERROR") {
         setGoogleBusy(false);
+        setOauthWatching(false);
         setGoogleError(data.error || "Google sign-in was denied.");
         preloadGoogleUrl(remember);
       }
@@ -119,7 +122,8 @@ export default function LoginForm({
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
-      if (!isTrustedOrigin(event.origin)) return;
+      const fromPopup = popupRef.current && event.source === popupRef.current;
+      if (!fromPopup && !isTrustedOrigin(event.origin)) return;
       handleOAuthPayload(event.data as OAuthMessage | null);
     };
     window.addEventListener("message", onMessage);
@@ -169,31 +173,37 @@ export default function LoginForm({
     return false;
   }, [finishGoogleSuccess]);
 
-  // Verify session if popup closes (handles COOP/blocked postMessage) or window regains focus
+  // Keep watching session & popup state even if COOP causes `popup.closed` to report true early
   useEffect(() => {
-    if (!googleBusy) return;
+    if (!oauthWatching) return;
     let cancelled = false;
+    const startedAt = Date.now();
+    const maxWatchMs = 5 * 60 * 1000;
 
-    const onFocus = () => {
-      if (!cancelled) {
+    const onFocusOrVisible = () => {
+      if (!cancelled && document.visibilityState !== "hidden") {
         void checkEstablishedSession();
       }
     };
-    window.addEventListener("focus", onFocus);
+    window.addEventListener("focus", onFocusOrVisible);
+    document.addEventListener("visibilitychange", onFocusOrVisible);
 
     let ticks = 0;
     const timer = window.setInterval(async () => {
-      ticks += 1;
-      if (popupRef.current && popupRef.current.closed) {
+      if (cancelled) return;
+      if (Date.now() - startedAt > maxWatchMs) {
         window.clearInterval(timer);
-        const ok = await checkEstablishedSession();
-        if (!cancelled && !ok) {
-          setGoogleBusy(false);
-          preloadGoogleUrl(remember);
-        }
+        setGoogleBusy(false);
+        setOauthWatching(false);
         return;
       }
-      if (ticks % 3 === 0 && !cancelled) {
+
+      ticks += 1;
+      if (popupRef.current && popupRef.current.closed) {
+        setGoogleBusy(false);
+      }
+
+      if (ticks % 2 === 0 || (popupRef.current && popupRef.current.closed)) {
         const ok = await checkEstablishedSession();
         if (ok) {
           window.clearInterval(timer);
@@ -203,10 +213,11 @@ export default function LoginForm({
 
     return () => {
       cancelled = true;
-      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("focus", onFocusOrVisible);
+      document.removeEventListener("visibilitychange", onFocusOrVisible);
       window.clearInterval(timer);
     };
-  }, [googleBusy, checkEstablishedSession, preloadGoogleUrl, remember]);
+  }, [oauthWatching, checkEstablishedSession]);
 
   const handleGoogleClick = async () => {
     setGoogleError(null);
@@ -260,6 +271,7 @@ export default function LoginForm({
     }
     popupRef.current = popup;
     setGoogleBusy(true);
+    setOauthWatching(true);
     // Single-use nonce: refresh URL in background for next attempt if needed
     setGoogleAuthUrl(null);
   };

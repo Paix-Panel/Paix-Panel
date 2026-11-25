@@ -6,11 +6,31 @@ set -euo pipefail
 PANEL_HOST=""
 ADMIN_EMAIL=""
 ASSUME_YES=0
+ACCESS_MODE=""
+NOIP_PROVIDER="noip"
+NOIP_HOSTNAME=""
+NOIP_USERNAME=""
+NOIP_PASSWORD=""
+CF_ZONE_ID=""
+CF_API_TOKEN=""
+CF_PROXIED="false"
+CF_TUNNEL_TOKEN=""
+DDNS_WEBHOOK_URL=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --domain) PANEL_HOST="$2"; shift 2 ;;
     --email)  ADMIN_EMAIL="$2"; shift 2 ;;
+    --access-mode|--network-mode) ACCESS_MODE="${2,,}"; shift 2 ;;
+    --noip-provider) NOIP_PROVIDER="${2,,}"; shift 2 ;;
+    --noip-hostname) NOIP_HOSTNAME="${2,,}"; shift 2 ;;
+    --noip-username) NOIP_USERNAME="$2"; shift 2 ;;
+    --noip-password) NOIP_PASSWORD="$2"; shift 2 ;;
+    --cf-zone-id) CF_ZONE_ID="$2"; shift 2 ;;
+    --cf-api-token) CF_API_TOKEN="$2"; shift 2 ;;
+    --cf-proxied) CF_PROXIED="${2,,}"; shift 2 ;;
+    --cf-tunnel-token) CF_TUNNEL_TOKEN="$2"; shift 2 ;;
+    --ddns-webhook-url) DDNS_WEBHOOK_URL="$2"; shift 2 ;;
     -y|--yes) ASSUME_YES=1; shift ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -36,6 +56,59 @@ if [[ -z "$PANEL_HOST" && -f /etc/vps-panel/.env ]]; then
   if [[ -n "$PREV_HOST" && ! "$PREV_HOST" =~ ^[0-9.]+$ && "$PREV_HOST" == *.* ]]; then
     PANEL_HOST="$PREV_HOST"
   fi
+fi
+
+if [[ -z "$ACCESS_MODE" ]] && [[ -t 0 ]] && [[ $ASSUME_YES -eq 0 ]]; then
+  echo ""
+  echo "Choose server network access mode:"
+  echo "  1) IP (Direct / Static IP or regular domain)"
+  echo "  2) No-IP (Dynamic IP / Shared Internet — keep server live 24/7)"
+  read -r -p "Select mode [1/2, default 1]: " MODE_CHOICE
+  if [[ "$MODE_CHOICE" == "2" || "${MODE_CHOICE,,}" == "noip" ]]; then
+    ACCESS_MODE="noip"
+    echo "Choose Keep-Live provider:"
+    echo "  1) No-IP.com DDNS (dynupdate.no-ip.com)"
+    echo "  2) Cloudflare DDNS (API Token updates DNS A-record)"
+    echo "  3) Cloudflare Tunnel (cloudflared — works behind hotspot / CGNAT)"
+    echo "  4) Custom DDNS Webhook URL"
+    read -r -p "Select provider [1-4, default 1]: " PROV_CHOICE
+    case "$PROV_CHOICE" in
+      2) NOIP_PROVIDER="cloudflare_ddns" ;;
+      3) NOIP_PROVIDER="cloudflare_tunnel" ;;
+      4) NOIP_PROVIDER="custom_webhook" ;;
+      *) NOIP_PROVIDER="noip" ;;
+    esac
+    read -r -p "Live hostname (e.g. myserver.ddns.net or panel.example.com): " NOIP_HOSTNAME
+    NOIP_HOSTNAME="${NOIP_HOSTNAME,,}"
+    if [[ "$NOIP_PROVIDER" == "noip" ]]; then
+      read -r -p "No-IP username / email / DDNS key: " NOIP_USERNAME
+      read -r -s -p "No-IP password / key secret: " NOIP_PASSWORD
+      echo ""
+    elif [[ "$NOIP_PROVIDER" == "cloudflare_ddns" ]]; then
+      read -r -p "Cloudflare Zone ID: " CF_ZONE_ID
+      read -r -s -p "Cloudflare API Token (Zone:DNS:Edit): " CF_API_TOKEN
+      echo ""
+      read -r -p "Proxy through Cloudflare? [y/N]: " CF_PROXY_ANS
+      [[ "${CF_PROXY_ANS,,}" == "y" || "${CF_PROXY_ANS,,}" == "yes" ]] && CF_PROXIED="true"
+    elif [[ "$NOIP_PROVIDER" == "cloudflare_tunnel" ]]; then
+      read -r -s -p "Cloudflare Tunnel Token: " CF_TUNNEL_TOKEN
+      echo ""
+    elif [[ "$NOIP_PROVIDER" == "custom_webhook" ]]; then
+      read -r -p "DDNS Webhook URL (use {ip} placeholder): " DDNS_WEBHOOK_URL
+    fi
+  else
+    ACCESS_MODE="ip"
+  fi
+fi
+ACCESS_MODE="${ACCESS_MODE:-ip}"
+if [[ "$ACCESS_MODE" != "ip" && "$ACCESS_MODE" != "noip" ]]; then
+  echo "FATAL: --access-mode must be 'ip' or 'noip'" >&2
+  exit 1
+fi
+NOIP_PROVIDER="${NOIP_PROVIDER//-/_}"
+
+if [[ -z "$PANEL_HOST" && "$ACCESS_MODE" == "noip" && -n "$NOIP_HOSTNAME" ]]; then
+  PANEL_HOST="$NOIP_HOSTNAME"
 fi
 
 if [[ -z "$PANEL_HOST" ]] && [[ -t 0 ]] && [[ $ASSUME_YES -eq 0 ]]; then
@@ -311,6 +384,18 @@ ADMIN_INITIAL_PASSWORD=$ADMIN_PASS
 COOKIE_SECURE=$COOKIE_SECURE_ENV
 ACME_EMAIL=$ADMIN_EMAIL
 REPO_DIR=$REPO_DIR
+NETWORK_ACCESS_MODE=$ACCESS_MODE
+NOIP_PROVIDER=$NOIP_PROVIDER
+NOIP_HOSTNAME=$NOIP_HOSTNAME
+NOIP_USERNAME=$NOIP_USERNAME
+NOIP_PASSWORD=$NOIP_PASSWORD
+CF_ZONE_ID=$CF_ZONE_ID
+CF_API_TOKEN=$CF_API_TOKEN
+CF_PROXIED=$CF_PROXIED
+CF_TUNNEL_TOKEN=$CF_TUNNEL_TOKEN
+DDNS_WEBHOOK_URL=$DDNS_WEBHOOK_URL
+LIVE_SYNC_INTERVAL_MINUTES=2
+LIVE_SYNC_AUTO=1
 EOF
   chmod 0640 "$ENV_FILE"
   chown root:vps-panel "$ENV_FILE"
@@ -1038,7 +1123,7 @@ chown -R vps-panel:vps-panel "$APP_DIR"
 cd "$APP_DIR"
 
 log "installing Node deps and building Next.js"
-sudo -u vps-panel HOME="$VAR_DIR" npm ci --no-audit --no-fund
+sudo -u vps-panel HOME="$VAR_DIR" bash -c 'npm ci --no-audit --no-fund || npm install --no-audit --no-fund'
 # NEXT_TELEMETRY_DISABLED: the Next.js build tool otherwise reports each build
 # (versions, machine size, page counts) to telemetry.nextjs.org.
 sudo -u vps-panel HOME="$VAR_DIR" NEXT_TELEMETRY_DISABLED=1 npm run build
@@ -1057,7 +1142,46 @@ install -m 0644 "$REPO_DIR/scripts/systemd/vps-panel-agent.service" \
   /etc/systemd/system/vps-panel-agent.service
 install -m 0644 "$REPO_DIR/scripts/systemd/vps-panel.service" \
   /etc/systemd/system/vps-panel.service
+cat > /etc/systemd/system/vps-panel-live.service <<EOF
+[Unit]
+Description=Paix Panel No-IP / Dynamic DNS Keep-Live Sync
+After=network-online.target vps-panel.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=vps-panel
+Group=vps-panel
+ExecStart=/usr/bin/env node $APP_DIR/scripts/live-sync.mjs
+EOF
+cat > /etc/systemd/system/vps-panel-live.timer <<'EOF'
+[Unit]
+Description=Run Paix Panel Live IP Sync every 2 minutes
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=2min
+Unit=vps-panel-live.service
+
+[Install]
+WantedBy=timers.target
+EOF
 systemctl daemon-reload
+systemctl enable --now vps-panel-live.timer
+
+if [[ "$ACCESS_MODE" == "noip" && "$NOIP_PROVIDER" == "cloudflare_tunnel" && -n "$CF_TUNNEL_TOKEN" ]]; then
+  log "configuring Cloudflare Tunnel (cloudflared)"
+  if ! command -v cloudflared >/dev/null 2>&1; then
+    ARCH="$(dpkg --print-architecture || echo amd64)"
+    curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARCH}.deb" -o /tmp/cloudflared.deb \
+      && dpkg -i /tmp/cloudflared.deb || warn "could not download/install cloudflared"
+    rm -f /tmp/cloudflared.deb
+  fi
+  if command -v cloudflared >/dev/null 2>&1; then
+    cloudflared service uninstall >/dev/null 2>&1 || true
+    cloudflared service install "$CF_TUNNEL_TOKEN" || warn "cloudflared service install failed"
+  fi
+fi
 
 #-------------------------------------------------- nginx vhost for the panel
 log "installing nginx vhost (server_name=$NGINX_SERVER_NAME)"
@@ -1119,6 +1243,7 @@ fi
 cat <<EOF
 
   Panel URL    : $PANEL_URL
+  Access mode  : $ACCESS_MODE$([[ "$ACCESS_MODE" == "noip" ]] && echo " ($NOIP_PROVIDER${NOIP_HOSTNAME:+ -> $NOIP_HOSTNAME})")
   Admin email  : $(grep ^ADMIN_EMAIL= "$ENV_FILE" | cut -d= -f2-)
   Admin pass   : $(grep ^ADMIN_INITIAL_PASSWORD= "$ENV_FILE" | cut -d= -f2-)
 

@@ -25,9 +25,15 @@ import ChangePasswordForm from "@/app/(panel)/settings/ChangePasswordForm";
 import PanelHostForm from "@/app/(panel)/settings/PanelHostForm";
 import TaskProgress from "@/components/TaskProgress/TaskProgress";
 import TailscaleManager from "@/components/QuickInstallStrip/TailscaleManager";
+import LiveAccessForm from "@/components/LiveAccessPanel/LiveAccessForm";
+import {
+  saveLiveAccessAction,
+  syncLiveAccessNowAction,
+} from "@/server-actions/liveAccess";
 import shared from "@/components/page.module.css";
 import styles from "./setup.module.css";
 import type { CoreServiceState, SshServerConfig } from "@/lib/agent";
+import type { LiveAccessPublicState } from "@/lib/liveAccess";
 import { PHASE_LABEL, phaseTone, type TailscaleCard } from "@/lib/tailscale";
 import { useFormActionState } from "@/lib/useFormActionState";
 import type { CatalogEntry } from "./catalog";
@@ -46,6 +52,8 @@ type Props = {
   adminEmail: string;
   acmeEmail: string;
   nsPair: string;
+  liveAccess: LiveAccessPublicState;
+  detectedPublicIp: string | null;
   policy: Policy;
   catalog: CatalogEntry[];
   /** Quick-install slugs already installed when the wizard loaded. */
@@ -64,6 +72,7 @@ type Props = {
 
 const STEP_LABELS: Record<SetupStep, string> = {
   welcome: "Welcome",
+  network: "IP / No-IP",
   hostname: "Hostname",
   services: "Services",
   acme: "SSL email",
@@ -116,6 +125,15 @@ export default function Wizard(props: Props) {
         <WelcomeStep
           panelHost={props.panelHost}
           adminEmail={props.adminEmail}
+          onNext={() => goTo(next()!)}
+        />
+      )}
+      {step === "network" && (
+        <NetworkStep
+          initial={props.liveAccess}
+          detectedIp={props.detectedPublicIp}
+          panelHost={props.panelHost}
+          onBack={() => goTo(prev())}
           onNext={() => goTo(next()!)}
         />
       )}
@@ -209,6 +227,53 @@ function WelcomeStep({
         <button className={shared.btn} onClick={onNext}>
           Get started
         </button>
+      </div>
+    </section>
+  );
+}
+
+function NetworkStep({
+  initial,
+  detectedIp,
+  panelHost,
+  onBack,
+  onNext,
+}: {
+  initial: LiveAccessPublicState;
+  detectedIp: string | null;
+  panelHost: string;
+  onBack: () => void;
+  onNext: () => void;
+}) {
+  return (
+    <section className={styles.card}>
+      <h2 className={styles.cardTitle}>Server access mode (IP or No-IP)</h2>
+      <p className={styles.cardSub}>
+        Choose whether this server uses a fixed <strong>Direct IP</strong> or{" "}
+        <strong>No-IP Dynamic Live</strong> mode (for shared internet, mobile
+        hotspot, or changing ISP IPs). You can switch between IP and No-IP
+        anytime later in Settings.
+      </p>
+      <LiveAccessForm
+        initial={initial}
+        detectedIp={detectedIp}
+        panelHost={panelHost}
+        saveAction={saveLiveAccessAction}
+        syncAction={syncLiveAccessNowAction}
+        variant="wizard"
+      />
+      <div className={styles.footer}>
+        <button className={shared.btnGhost} onClick={onBack}>
+          Back
+        </button>
+        <div className={styles.footerRight}>
+          <button className={shared.btnGhost} onClick={onNext}>
+            Skip
+          </button>
+          <button className={shared.btn} onClick={onNext}>
+            Continue
+          </button>
+        </div>
       </div>
     </section>
   );

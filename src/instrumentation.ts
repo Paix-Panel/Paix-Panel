@@ -10,4 +10,6 @@ export async function register() {
   startHeartbeat();
   const { startHousekeeping } = await import("./lib/housekeeping");
   startHousekeeping();
+  const { startLiveSyncScheduler } = await import("./lib/liveAccess");
+  startLiveSyncScheduler();
 }

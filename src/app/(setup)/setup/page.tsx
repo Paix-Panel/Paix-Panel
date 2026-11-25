@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { getSetting } from "@/lib/settings";
 import { agent } from "@/lib/agent";
 import { tailscaleCard } from "@/lib/tailscale";
+import { detectPublicIp, getLiveAccessPublicState } from "@/lib/liveAccess";
 import { getSetupState, getFail2banPolicy } from "@/server-actions/setup";
 import { SETUP_STEPS } from "./steps";
 import { SETUP_APP_CATALOG } from "./catalog";
@@ -30,6 +31,8 @@ export default async function SetupPage() {
       .get(session.userId) !== undefined;
   const acmeEmail = getSetting("panel.acme_email", "");
   const nsPair = getSetting("dns.ns_pair", "");
+  const liveAccess = getLiveAccessPublicState();
+  const detectedPublicIp = liveAccess.status.lastIp ?? (await detectPublicIp().catch(() => null));
   const policy = await getFail2banPolicy();
   const initialServices = await agent.system.services().catch(() => []);
   const pdnsZones = await agent.dns.listZones().catch(() => []);
@@ -53,6 +56,8 @@ export default async function SetupPage() {
       adminEmail={config.bootstrapEmail ?? ""}
       acmeEmail={acmeEmail}
       nsPair={nsPair}
+      liveAccess={liveAccess}
+      detectedPublicIp={detectedPublicIp}
       policy={policy}
       catalog={[...SETUP_APP_CATALOG]}
       installedApps={recipes.filter((r) => r.installed).map((r) => r.slug)}

@@ -8,6 +8,7 @@ import {
   HardDrive,
   Mail,
   PlusSquare,
+  Radio,
   ScrollText,
   Server,
   Settings,
@@ -17,6 +18,7 @@ import {
 } from "lucide-react";
 import { agent } from "@/lib/agent";
 import { requireSession } from "@/lib/auth";
+import { getLiveAccessPublicState } from "@/lib/liveAccess";
 import {
   hasAnyPermission,
   hasPermission,
@@ -55,6 +57,7 @@ export default async function DashboardPage() {
     canDomains ? agent.ssl.list().catch(() => null) : Promise.resolve(null),
     getServerAddress().catch(() => ({ domain: null, ip: null })),
   ]);
+  const liveAccess = getLiveAccessPublicState();
 
   const apps = rawApps ? rawApps.filter((a) => isAppAllowed(session, a.name)) : null;
   const certs = rawCerts ? rawCerts.filter((c) => isDomainAllowed(session, c.domain)) : null;
@@ -201,12 +204,23 @@ export default async function DashboardPage() {
     });
   }
   if (hasPermission(session, "settings")) {
-    hubItems.push({
-      href: "/settings",
-      label: "Settings",
-      sub: "Server, SSL email & Google SSO",
-      icon: <Settings size={16} />,
-    });
+    hubItems.push(
+      {
+        href: "/settings?tab=live-access",
+        label: "IP / No-IP Live",
+        sub:
+          liveAccess.mode === "noip"
+            ? `No-IP active (${liveAccess.hostname || liveAccess.provider.replace(/_/g, " ")})`
+            : "Switch IP or No-IP keep-live",
+        icon: <Radio size={16} />,
+      },
+      {
+        href: "/settings",
+        label: "Settings",
+        sub: "Server, SSL email & Google SSO",
+        icon: <Settings size={16} />,
+      },
+    );
   }
 
   return (
@@ -244,6 +258,16 @@ export default async function DashboardPage() {
               </>
             )}
             {!info && <span>Agent unreachable</span>}
+            {hasPermission(session, "settings") && (
+              <>
+                <span className={grid.serverDot}>·</span>
+                <Link href="/settings?tab=live-access" style={{ color: "inherit", textDecoration: "underline" }}>
+                  {liveAccess.mode === "noip"
+                    ? `No-IP Live (${liveAccess.hostname || liveAccess.provider.replace(/_/g, " ")})`
+                    : "IP Mode"}
+                </Link>
+              </>
+            )}
             <span className={grid.serverDot}>·</span>
             <span>
               Signed in as <strong>{session.email}</strong> ({roleDisplayLabel(session.role)})

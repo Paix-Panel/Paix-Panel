@@ -112,7 +112,7 @@ build_panel() {
   # tree just landed root-owned; without this chown `sudo -u vps-panel npm ci`
   # fails with EACCES on node_modules.
   chown -R vps-panel:vps-panel "$APP_DIR" &&
-  (cd "$APP_DIR" && sudo -u vps-panel HOME=/var/lib/vps-panel npm ci --no-audit --no-fund) &&
+  (cd "$APP_DIR" && sudo -u vps-panel HOME=/var/lib/vps-panel bash -c 'npm ci --no-audit --no-fund || npm install --no-audit --no-fund') &&
   # NEXT_TELEMETRY_DISABLED: no build report to telemetry.nextjs.org.
   (cd "$APP_DIR" && sudo -u vps-panel HOME=/var/lib/vps-panel NEXT_TELEMETRY_DISABLED=1 npm run build) &&
   (
@@ -1032,6 +1032,39 @@ ensure_public_ip_env() {
   return 0
 }
 ensure_public_ip_env || true
+
+# Install/refresh the IP / No-IP keep-live systemd timer so dynamic IP setups
+# keep syncing even across restarts. Idempotent.
+ensure_live_sync_timer() {
+  cat > /etc/systemd/system/vps-panel-live.service <<EOF
+[Unit]
+Description=Paix Panel No-IP / Dynamic DNS Keep-Live Sync
+After=network-online.target vps-panel.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=vps-panel
+Group=vps-panel
+ExecStart=/usr/bin/env node $APP_DIR/scripts/live-sync.mjs
+EOF
+  cat > /etc/systemd/system/vps-panel-live.timer <<'EOF'
+[Unit]
+Description=Run Paix Panel Live IP Sync every 2 minutes
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=2min
+Unit=vps-panel-live.service
+
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl daemon-reload || true
+  systemctl enable --now vps-panel-live.timer >/dev/null 2>&1 || true
+  return 0
+}
+ensure_live_sync_timer || true
 
 # How often systemd has restarted the unit by itself since its last start.
 unit_restarts() {

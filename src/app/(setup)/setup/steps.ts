@@ -2,6 +2,7 @@
 // certificate, and Let's Encrypt registers with the SSL contact email.
 export const SETUP_STEPS = [
   "welcome",
+  "network",
   "acme",
   "hostname",
   "services",

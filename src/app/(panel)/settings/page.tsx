@@ -69,6 +69,12 @@ import { isIP } from "node:net";
 import SettingsTabs, { type SettingsTab } from "./SettingsTabs";
 import MailIpSection, { loadMailIpSettings } from "./MailIpSection";
 import PrivacySection, { loadPrivacy } from "./PrivacySection";
+import LiveAccessForm from "@/components/LiveAccessPanel/LiveAccessForm";
+import { detectPublicIp, getLiveAccessPublicState } from "@/lib/liveAccess";
+import {
+  saveLiveAccessAction,
+  syncLiveAccessNowAction,
+} from "@/server-actions/liveAccess";
 
 export const dynamic = "force-dynamic";
 
@@ -165,6 +171,9 @@ export default async function SettingsPage() {
   const panelHostName = config.panelHost && !isIP(config.panelHost) ? config.panelHost : null;
   const mailIp = await loadMailIpSettings();
   const privacy = await loadPrivacy();
+  const liveAccess = getLiveAccessPublicState();
+  const detectedPublicIp =
+    liveAccess.status.lastIp ?? (await detectPublicIp().catch(() => null));
   const pdnsZones = await agent.dns.listZones().catch(() => []);
   const panelHostCertStatus = config.panelHost
     ? await agent.sites
@@ -183,6 +192,28 @@ export default async function SettingsPage() {
       anchors: ["panel-host", "uploads"],
       content: (
         <>
+          <div className={styles.section}>
+            <h2 className={styles.sectionTitle}>Access mode</h2>
+            <p className={styles.muted} style={{ marginBottom: 10 }}>
+              Currently running in{" "}
+              <strong>
+                {liveAccess.mode === "noip"
+                  ? `No-IP Live (${liveAccess.provider.replace(/_/g, " ")})`
+                  : "Direct IP Mode"}
+              </strong>
+              {liveAccess.mode === "noip" && liveAccess.hostname ? (
+                <>
+                  {" "}
+                  for <span className={styles.code}>{liveAccess.hostname}</span>
+                </>
+              ) : null}
+              .{" "}
+              <Link href="/settings?tab=live-access" className={styles.code}>
+                Switch IP / No-IP →
+              </Link>
+            </p>
+          </div>
+
           <div className={styles.section} id="panel-host">
             <h2 className={styles.sectionTitle}>Panel hostname</h2>
             <p className={styles.muted} style={{ marginBottom: 10 }}>
@@ -239,6 +270,32 @@ export default async function SettingsPage() {
             </ul>
           </div>
         </>
+      ),
+    },
+    {
+      id: "live-access",
+      label: "IP / No-IP",
+      anchors: ["live-access", "ddns"],
+      content: (
+        <div className={styles.section} id="live-access">
+          <h2 className={styles.sectionTitle}>
+            Server Access Mode (IP vs No-IP Live)
+          </h2>
+          <p className={styles.muted} style={{ marginBottom: 12 }}>
+            Switch between <strong>Direct IP</strong> and{" "}
+            <strong>No-IP Dynamic Live</strong> mode. When running on shared
+            internet, hotspot, or a dynamic ISP IP, No-IP mode keeps your
+            server online 24/7 by syncing IP changes automatically or keeping an
+            outbound Cloudflare Tunnel open.
+          </p>
+          <LiveAccessForm
+            initial={liveAccess}
+            detectedIp={detectedPublicIp}
+            panelHost={config.panelHost}
+            saveAction={saveLiveAccessAction}
+            syncAction={syncLiveAccessNowAction}
+          />
+        </div>
       ),
     },
     {
@@ -450,7 +507,9 @@ export default async function SettingsPage() {
       <div className={styles.head}>
         <div>
           <h1 className={styles.title}>Settings</h1>
-          <div className={styles.subtitle}>Panel configuration, Google SSO, and account.</div>
+          <div className={styles.subtitle}>
+            Panel configuration, IP / No-IP live access, Google SSO, and account.
+          </div>
         </div>
       </div>
 

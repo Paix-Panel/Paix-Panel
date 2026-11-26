@@ -952,6 +952,18 @@ ensure_dig() {
 }
 ensure_dig || true
 
+ensure_zip_tools() {
+  (command -v zip >/dev/null 2>&1 && command -v unzip >/dev/null 2>&1) && return 0
+  if DEBIAN_FRONTEND=noninteractive apt-get install -y "${APT_KEEP_CONF[@]}" --no-install-recommends \
+       zip unzip >/dev/null 2>&1; then
+    echo "installed zip and unzip"
+  else
+    echo "could not install zip/unzip via apt (archive features fall back to python3)" >&2
+  fi
+  return 0
+}
+ensure_zip_tools || true
+
 # PowerDNS answers over IPv6 too, on boxes installed before it did (install.sh
 # writes the same line now). It was bound to the public IPv4 and 127.0.0.1
 # only, while a zone gets AAAA records for its own ns1/ns2 once the server has

@@ -834,11 +834,11 @@ export const agent = {
         timeoutMs: READ_MS,
         query: { root, path },
       }),
-    mkdir: (root: string, path: string, name: string) =>
+    mkdir: (root: string, path: string, name: string, opts?: { existOk?: boolean }) =>
       agentRequest<{ ok: boolean; path: string }>({
         method: "POST",
         path: "/files/mkdir",
-        body: { root, path, name },
+        body: { root, path, name, exist_ok: opts?.existOk ?? false },
       }),
     newFile: (root: string, path: string, name: string) =>
       agentRequest<{ ok: boolean; path: string }>({
@@ -859,6 +859,40 @@ export const agent = {
         method: "POST",
         path: "/files/move",
         body: { root, paths, dest },
+      }),
+    compress: (body: {
+      root: string;
+      path: string;
+      paths: string[];
+      archiveName: string;
+      overwrite?: boolean;
+    }) =>
+      agentRequest<FileCompressResult>({
+        method: "POST",
+        path: "/files/compress",
+        body: {
+          root: body.root,
+          path: body.path,
+          paths: body.paths,
+          archive_name: body.archiveName,
+          overwrite: body.overwrite ?? false,
+        },
+      }),
+    extract: (body: {
+      root: string;
+      path: string;
+      dest?: string;
+      overwrite?: boolean;
+    }) =>
+      agentRequest<FileExtractResult>({
+        method: "POST",
+        path: "/files/extract",
+        body: {
+          root: body.root,
+          path: body.path,
+          dest: body.dest,
+          overwrite: body.overwrite ?? false,
+        },
       }),
     trash: (root: string, paths: string[]) =>
       agentRequest<FileBatchResult>({
@@ -1309,6 +1343,18 @@ export type FileBatchResult = {
   moved?: number;
   trashed?: number;
   errors: string[];
+};
+
+export type FileCompressResult = {
+  ok: boolean;
+  path: string;
+  size: number;
+};
+
+export type FileExtractResult = {
+  ok: boolean;
+  dest: string;
+  extracted: number;
 };
 
 export type TrashRow = {

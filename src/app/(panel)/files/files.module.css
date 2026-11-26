@@ -400,6 +400,44 @@
   overflow-y: auto;
 }
 
+.btnInner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.optionGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.optionRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.subField {
+  margin-left: 22px;
+  margin-top: 4px;
+}
+
+.zipBadge {
+  font-size: 10px;
+  font-family: var(--mono);
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  color: var(--accent-glow);
+  flex: none;
+}
+
 @media (max-width: 768px) {
   .row {
     grid-template-columns: 28px 1fr 80px;
@@ -409,3 +447,4 @@
     display: none;
   }
 }
+

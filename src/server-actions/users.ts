@@ -80,7 +80,13 @@ export async function listPanelUsers(): Promise<PanelUserRow[]> {
       `SELECT id, email, display_name, role, permissions_json,
               google_enabled, is_active, totp_enabled, last_login_at, created_at
          FROM users ORDER BY
-           CASE role WHEN 'super_admin' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,
+           CASE role
+             WHEN 'super_admin' THEN 0
+             WHEN 'admin' THEN 1
+             WHEN 'vps_admin' THEN 2
+             WHEN 'hosting_admin' THEN 3
+             ELSE 4
+           END,
            id ASC`,
     )
     .all() as PanelUserRow[];
@@ -174,9 +180,9 @@ export async function createPanelUserAction(
   }
 
   const permissionsJson =
-    role === "user"
-      ? parseFormPermissions(fd)
-      : serializePermissions(emptyPermissions());
+    role === "super_admin" || role === "admin"
+      ? serializePermissions(emptyPermissions())
+      : parseFormPermissions(fd);
 
   try {
     const hash = password ? await hashPassword(password) : "!google-oauth-only!";
@@ -263,9 +269,9 @@ export async function updatePanelUserPermissionsAction(
   }
 
   const permissionsJson =
-    nextRole === "user"
-      ? parseFormPermissions(fd)
-      : serializePermissions(emptyPermissions());
+    nextRole === "super_admin" || nextRole === "admin"
+      ? serializePermissions(emptyPermissions())
+      : parseFormPermissions(fd);
 
   db()
     .prepare(

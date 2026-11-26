@@ -813,6 +813,8 @@ pub struct CreateReq {
     #[serde(default)]
     pub path: String,
     pub name: String,
+    #[serde(default)]
+    pub exist_ok: bool,
 }
 
 #[derive(Serialize)]
@@ -835,7 +837,11 @@ async fn create_entry(req: CreateReq, is_dir: bool) -> AgentResult<Json<CreatedR
     validate_name(&req.name)?;
     let dir = resolve_dir(root, &req.path).await?;
     let target = guard_new_entry(root, &dir, req.name.as_ref())?;
-    if fs::symlink_metadata(&target).await.is_ok() {
+    if let Ok(meta) = fs::symlink_metadata(&target).await {
+        if is_dir && req.exist_ok && meta.is_dir() {
+            let rel = join_rel(&req.path, &req.name);
+            return Ok(Json(CreatedResponse { ok: true, path: rel }));
+        }
         return Err(AgentError::Conflict(format!(
             "{:?} already exists here",
             req.name
@@ -975,6 +981,535 @@ fn join_rel(dir: &str, name: &str) -> String {
     } else {
         format!("{dir}/{name}")
     }
+}
+
+// ---------------------------------------------------------------------------
+// Compress / extract (.zip)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct CompressReq {
+    pub root: String,
+    /// Directory containing the items and where the archive is saved, relative to the root.
+    #[serde(default)]
+    pub path: String,
+    /// Items inside `path` to compress, each relative to the root.
+    pub paths: Vec<String>,
+    /// Output `.zip` filename.
+    pub archive_name: String,
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
+#[derive(Serialize)]
+pub struct CompressResponse {
+    pub ok: bool,
+    pub path: String,
+    pub size: u64,
+}
+
+#[derive(Deserialize)]
+pub struct ExtractReq {
+    pub root: String,
+    /// Path to the `.zip` archive relative to the root.
+    pub path: String,
+    /// Optional destination folder relative to the root. Defaults to the archive's folder.
+    #[serde(default)]
+    pub dest: Option<String>,
+    #[serde(default)]
+    pub overwrite: bool,
+}
+
+#[derive(Serialize)]
+pub struct ExtractResponse {
+    pub ok: bool,
+    pub dest: String,
+    pub extracted: usize,
+}
+
+fn normalize_zip_archive_name(raw: &str) -> AgentResult<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err(AgentError::Invalid("archive name must not be empty".into()));
+    }
+    let name = if trimmed.to_ascii_lowercase().ends_with(".zip") {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}.zip")
+    };
+    validate_name(&name)?;
+    Ok(name)
+}
+
+async fn run_archive_python(script: &str, args: &[String]) -> AgentResult<serde_json::Value> {
+    use std::process::Stdio;
+    let mut cmd = tokio::process::Command::new("python3");
+    cmd.arg("-c").arg(script).args(args);
+    for secret in exec::AGENT_SECRET_ENV {
+        cmd.env_remove(secret);
+    }
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+
+    let child = cmd.spawn().map_err(AgentError::Io)?;
+    let out = tokio::time::timeout(
+        std::time::Duration::from_secs(600),
+        child.wait_with_output(),
+    )
+    .await
+    .map_err(|_| AgentError::Invalid("archive operation timed out after 10 minutes".into()))?
+    .map_err(AgentError::Io)?;
+
+    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if !out.status.success() {
+        let msg = if stderr.is_empty() {
+            format!("archive command failed (exit {})", out.status.code().unwrap_or(-1))
+        } else {
+            stderr
+        };
+        return Err(match out.status.code() {
+            Some(2 | 3) => AgentError::Conflict(msg),
+            Some(4) => AgentError::Invalid(msg),
+            code => AgentError::Subprocess {
+                cmd: "python3".into(),
+                code: code.unwrap_or(-1),
+                stderr: msg,
+            },
+        });
+    }
+    serde_json::from_str::<serde_json::Value>(&stdout)
+        .map_err(|e| AgentError::Other(anyhow::anyhow!("invalid archive helper output: {e}")))
+}
+
+const PYTHON_COMPRESS_ZIP: &str = r#"
+import json, os, sys, zipfile
+
+base_dir = sys.argv[1]
+tmp_zip = sys.argv[2]
+min_free = int(sys.argv[3])
+protected = [os.path.normpath(p) for p in json.loads(sys.argv[4])]
+names = json.loads(sys.argv[5])
+
+def is_protected(p):
+    np = os.path.normpath(p)
+    for prot in protected:
+        if np == prot or np.startswith(prot + os.sep):
+            return True
+    return False
+
+def is_temp(name):
+    return (name.startswith(".vps-panel-upload.") and name.endswith(".tmp")) or (
+        name.startswith(".vps-panel-zip.") and name.endswith(".tmp.zip")
+    )
+
+def check_space():
+    st = os.statvfs(base_dir)
+    if st.f_bavail * st.f_frsize < min_free:
+        sys.stderr.write("not enough free disk space left to complete the archive\n")
+        sys.exit(2)
+
+count = 0
+with zipfile.ZipFile(tmp_zip, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
+    for name in names:
+        full = os.path.join(base_dir, name)
+        if os.path.islink(full):
+            continue
+        if is_protected(full):
+            sys.stderr.write(f"{name} is a protected system path\n")
+            sys.exit(4)
+        if os.path.isfile(full):
+            check_space()
+            zf.write(full, arcname=name)
+            count += 1
+        elif os.path.isdir(full):
+            empty_root = True
+            for cur, dirs, files in os.walk(full, topdown=True, followlinks=False):
+                kept_dirs = []
+                for d in dirs:
+                    dp = os.path.join(cur, d)
+                    if not os.path.islink(dp) and not is_protected(dp):
+                        kept_dirs.append(d)
+                dirs[:] = kept_dirs
+                rel_cur = os.path.relpath(cur, base_dir).replace(os.sep, "/")
+                if not dirs and not files:
+                    zf.writestr(rel_cur.rstrip("/") + "/", b"")
+                for fn in files:
+                    if is_temp(fn):
+                        continue
+                    fp = os.path.join(cur, fn)
+                    if os.path.islink(fp) or is_protected(fp):
+                        continue
+                    empty_root = False
+                    if count % 64 == 0:
+                        check_space()
+                    rel_file = os.path.relpath(fp, base_dir).replace(os.sep, "/")
+                    zf.write(fp, arcname=rel_file)
+                    count += 1
+            if empty_root:
+                rel_top = name.rstrip("/") + "/"
+                if rel_top not in zf.namelist():
+                    zf.writestr(rel_top, b"")
+
+print(json.dumps({"count": count}))
+"#;
+
+const PYTHON_EXTRACT_ZIP: &str = r#"
+import json, os, stat, sys, uuid, zipfile
+
+archive_path = sys.argv[1]
+dest_dir = os.path.realpath(sys.argv[2])
+overwrite = sys.argv[3] == "1"
+min_free = int(sys.argv[4])
+locked_paths = [os.path.normpath(p) for p in json.loads(sys.argv[5])]
+max_entries = 100000
+
+def is_locked(p):
+    np = os.path.normpath(p)
+    for lp in locked_paths:
+        if np == lp or np.startswith(lp + os.sep):
+            return True
+    return False
+
+try:
+    zf = zipfile.ZipFile(archive_path, "r")
+except zipfile.BadZipFile:
+    sys.stderr.write("not a valid .zip archive\n")
+    sys.exit(4)
+
+with zf:
+    infos = zf.infolist()
+    if len(infos) > max_entries:
+        sys.stderr.write(f"archive has too many entries ({len(infos)}; limit {max_entries})\n")
+        sys.exit(4)
+
+    dest_stat = os.lstat(dest_dir)
+    dest_uid, dest_gid = dest_stat.st_uid, dest_stat.st_gid
+    st = os.statvfs(dest_dir)
+    free_bytes = st.f_bavail * st.f_frsize
+    room = max(0, free_bytes - min_free)
+
+    declared_total = 0
+    plan = []
+
+    for info in infos:
+        raw_name = info.filename.replace("\\", "/")
+        if "\x00" in raw_name:
+            sys.stderr.write("archive entry contains a null byte\n")
+            sys.exit(4)
+        if raw_name.startswith("/"):
+            sys.stderr.write(f"unsafe absolute path in archive: {raw_name}\n")
+            sys.exit(4)
+        mode_type = (info.external_attr >> 16) & 0o170000
+        if mode_type == stat.S_IFLNK:
+            sys.stderr.write(f"refusing symlink entry in archive: {raw_name}\n")
+            sys.exit(4)
+
+        parts = [p for p in raw_name.split("/") if p not in ("", ".")]
+        if not parts:
+            continue
+        if any(p == ".." or ":" in p and p.endswith(":") for p in parts):
+            sys.stderr.write(f"unsafe path traversal in archive: {raw_name}\n")
+            sys.exit(4)
+
+        rel_norm = "/".join(parts)
+        target = os.path.normpath(os.path.join(dest_dir, *parts))
+        if target != dest_dir and not target.startswith(dest_dir + os.sep):
+            sys.stderr.write(f"archive path escapes destination: {raw_name}\n")
+            sys.exit(4)
+        if is_locked(target):
+            sys.stderr.write(f"refusing to extract onto protected system path: {target}\n")
+            sys.exit(4)
+
+        # Ensure no existing path component on disk along target is a symlink.
+        cur = dest_dir
+        for seg in parts[:-1]:
+            cur = os.path.join(cur, seg)
+            if os.path.lexists(cur):
+                if os.path.islink(cur) or not os.path.isdir(cur):
+                    sys.stderr.write(f"refusing to extract through non-directory or symlink: {cur}\n")
+                    sys.exit(4)
+
+        is_dir = info.is_dir() or raw_name.endswith("/")
+        if os.path.lexists(target):
+            if os.path.islink(target):
+                sys.stderr.write(f"refusing to overwrite existing symlink: {rel_norm}\n")
+                sys.exit(3)
+            if is_dir:
+                if not os.path.isdir(target):
+                    sys.stderr.write(f"{rel_norm} already exists as a file\n")
+                    sys.exit(3)
+            else:
+                if os.path.isdir(target):
+                    sys.stderr.write(f"{rel_norm} already exists as a folder\n")
+                    sys.exit(3)
+                if not overwrite:
+                    sys.stderr.write(f"{rel_norm} already exists (enable Overwrite to replace it)\n")
+                    sys.exit(3)
+
+        if not is_dir:
+            declared_total += max(0, info.file_size)
+        plan.append((info, parts, rel_norm, target, is_dir))
+
+    if declared_total > room:
+        need_mb = max(1, declared_total // (1024 * 1024))
+        room_mb = room // (1024 * 1024)
+        sys.stderr.write(
+            f"archive needs ~{need_mb} MB uncompressed, only {room_mb} MB available before the 1024 MB safety floor\n"
+        )
+        sys.exit(2)
+
+    def ensure_dir_chain(dir_parts):
+        cur = dest_dir
+        for seg in dir_parts:
+            cur = os.path.join(cur, seg)
+            if not os.path.lexists(cur):
+                os.mkdir(cur, 0o755)
+                os.chmod(cur, 0o755)
+                try:
+                    os.lchown(cur, dest_uid, dest_gid)
+                except OSError:
+                    pass
+            elif os.path.islink(cur) or not os.path.isdir(cur):
+                sys.stderr.write(f"refusing to extract into non-directory: {cur}\n")
+                sys.exit(4)
+        return cur
+
+    extracted = 0
+    written_total = 0
+    last_space_check = 0
+
+    for info, parts, rel_norm, target, is_dir in plan:
+        if is_dir:
+            ensure_dir_chain(parts)
+            extracted += 1
+            continue
+
+        parent_dir = ensure_dir_chain(parts[:-1])
+        tmp_path = os.path.join(parent_dir, f".vps-panel-extract.{uuid.uuid4().hex}.tmp")
+        unix_mode = (info.external_attr >> 16) & 0o777
+        file_mode = 0o755 if (unix_mode & 0o111) else 0o644
+
+        try:
+            with zf.open(info, "r") as src, open(tmp_path, "wb") as dst:
+                while True:
+                    chunk = src.read(65536)
+                    if not chunk:
+                        break
+                    written_total += len(chunk)
+                    if written_total - last_space_check >= 4 * 1024 * 1024:
+                        last_space_check = written_total
+                        cur_st = os.statvfs(dest_dir)
+                        if cur_st.f_bavail * cur_st.f_frsize < min_free:
+                            sys.stderr.write("ran out of disk space while extracting — aborted\n")
+                            sys.exit(2)
+                    dst.write(chunk)
+                dst.flush()
+                os.fsync(dst.fileno())
+            os.chmod(tmp_path, file_mode)
+            try:
+                os.lchown(tmp_path, dest_uid, dest_gid)
+            except OSError:
+                pass
+            os.replace(tmp_path, target)
+            extracted += 1
+        except Exception:
+            try:
+                if os.path.lexists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
+            raise
+
+print(json.dumps({"extracted": extracted}))
+"#;
+
+pub async fn compress(Json(req): Json<CompressReq>) -> AgentResult<Json<CompressResponse>> {
+    if req.paths.is_empty() {
+        return Err(AgentError::Invalid(
+            "select at least one file or folder to compress".into(),
+        ));
+    }
+    let root = find_root(&req.root)?;
+    let dir = resolve_dir(root, &req.path).await?;
+    let archive_name = normalize_zip_archive_name(&req.archive_name)?;
+    let target = guard_new_entry(root, &dir, archive_name.as_ref())?;
+    if !req.overwrite && fs::symlink_metadata(&target).await.is_ok() {
+        return Err(AgentError::Conflict(format!(
+            "{:?} already exists here",
+            archive_name
+        )));
+    }
+    if let Some(free) = available_bytes(&dir) {
+        if free < MIN_FREE_BYTES {
+            return Err(AgentError::Conflict(format!(
+                "only {} MB free on this filesystem — free some space first",
+                free / (1024 * 1024)
+            )));
+        }
+    }
+
+    let mut names: Vec<String> = Vec::with_capacity(req.paths.len());
+    for rel in &req.paths {
+        let leaf = resolve_leaf(root, rel).await?;
+        if is_protected(&leaf) {
+            return Err(AgentError::Invalid(format!(
+                "{} is a protected system path",
+                leaf.display()
+            )));
+        }
+        if leaf.parent() != Some(dir.as_path()) {
+            return Err(AgentError::Invalid(format!(
+                "{rel} must be inside the current folder"
+            )));
+        }
+        if fs::symlink_metadata(&leaf).await.is_err() {
+            return Err(AgentError::NotFound);
+        }
+        if leaf == target {
+            return Err(AgentError::Invalid(
+                "cannot include the output archive inside itself".into(),
+            ));
+        }
+        let name = leaf
+            .file_name()
+            .ok_or_else(|| AgentError::Invalid("invalid item name".into()))?
+            .to_string_lossy()
+            .into_owned();
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+
+    let tmp = dir.join(format!(".vps-panel-zip.{}.tmp.zip", Uuid::new_v4()));
+    let protected_json = serde_json::to_string(PROTECTED)
+        .map_err(|e| AgentError::Other(anyhow::anyhow!("serialize protected: {e}")))?;
+    let names_json = serde_json::to_string(&names)
+        .map_err(|e| AgentError::Other(anyhow::anyhow!("serialize names: {e}")))?;
+
+    let args = vec![
+        dir.to_string_lossy().into_owned(),
+        tmp.to_string_lossy().into_owned(),
+        MIN_FREE_BYTES.to_string(),
+        protected_json,
+        names_json,
+    ];
+    let run_res = run_archive_python(PYTHON_COMPRESS_ZIP, &args).await;
+    if let Err(e) = run_res {
+        let _ = fs::remove_file(&tmp).await;
+        return Err(e);
+    }
+
+    fs_atomic::chmod(&tmp, 0o644).await?;
+    inherit_owner(&dir, &tmp).await;
+    if let Err(e) = fs::rename(&tmp, &target).await {
+        let _ = fs::remove_file(&tmp).await;
+        return Err(AgentError::Io(e));
+    }
+    let meta = fs::metadata(&target).await.map_err(AgentError::Io)?;
+    Ok(Json(CompressResponse {
+        ok: true,
+        path: join_rel(&req.path, &archive_name),
+        size: meta.len(),
+    }))
+}
+
+pub async fn extract(Json(req): Json<ExtractReq>) -> AgentResult<Json<ExtractResponse>> {
+    let root = find_root(&req.root)?;
+    let (archive, _meta) = resolve_read_file(&req.root, &req.path).await?;
+    let is_zip = archive
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("zip"));
+    if !is_zip {
+        return Err(AgentError::Invalid(
+            "only .zip archives can be extracted here".into(),
+        ));
+    }
+
+    let dest_rel = match req.dest.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(d) => clean_rel(d)?.to_string_lossy().replace('\\', "/"),
+        None => clean_rel(&req.path)?
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .to_string_lossy()
+            .replace('\\', "/"),
+    };
+
+    let root_base = fs::canonicalize(root.path)
+        .await
+        .map_err(|_| AgentError::NotFound)?;
+    let dest_dir = match resolve_dir(root, &dest_rel).await {
+        Ok(d) => d,
+        Err(AgentError::NotFound) => {
+            let cleaned = clean_rel(&dest_rel)?;
+            let mut cur = root_base.clone();
+            for comp in cleaned.components() {
+                if let Component::Normal(seg) = comp {
+                    let next = cur.join(seg);
+                    if fs::symlink_metadata(&next).await.is_err() {
+                        let checked = guard_new_entry(root, &cur, seg)?;
+                        fs::create_dir(&checked).await.map_err(AgentError::Io)?;
+                        fs_atomic::chmod(&checked, 0o755).await?;
+                        inherit_owner(&cur, &checked).await;
+                    }
+                    cur = fs::canonicalize(&next)
+                        .await
+                        .map_err(|_| AgentError::NotFound)?;
+                    if !cur.starts_with(&root_base) {
+                        return Err(AgentError::Invalid(
+                            "destination resolves outside its root".into(),
+                        ));
+                    }
+                }
+            }
+            let meta = fs::metadata(&cur).await.map_err(AgentError::Io)?;
+            if !meta.is_dir() {
+                return Err(AgentError::Invalid(
+                    "destination path is not a directory".into(),
+                ));
+            }
+            cur
+        }
+        Err(e) => return Err(e),
+    };
+    guard_write_into(root, &dest_dir)?;
+
+    if let Some(free) = available_bytes(&dest_dir) {
+        if free < MIN_FREE_BYTES {
+            return Err(AgentError::Conflict(format!(
+                "only {} MB free on this filesystem — free some space first",
+                free / (1024 * 1024)
+            )));
+        }
+    }
+
+    let mut locked: Vec<&str> = Vec::with_capacity(PROTECTED.len() + KEPT_DIRS.len());
+    locked.extend_from_slice(PROTECTED);
+    locked.extend_from_slice(KEPT_DIRS);
+    let locked_json = serde_json::to_string(&locked)
+        .map_err(|e| AgentError::Other(anyhow::anyhow!("serialize locked: {e}")))?;
+
+    let args = vec![
+        archive.to_string_lossy().into_owned(),
+        dest_dir.to_string_lossy().into_owned(),
+        if req.overwrite { "1".to_string() } else { "0".to_string() },
+        MIN_FREE_BYTES.to_string(),
+        locked_json,
+    ];
+    let out = run_archive_python(PYTHON_EXTRACT_ZIP, &args).await?;
+    let extracted = out
+        .get("extracted")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+
+    Ok(Json(ExtractResponse {
+        ok: true,
+        dest: dest_rel,
+        extracted,
+    }))
 }
 
 // ---------------------------------------------------------------------------

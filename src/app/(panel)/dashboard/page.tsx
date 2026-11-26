@@ -7,6 +7,7 @@ import {
   Globe,
   HardDrive,
   Mail,
+  Package,
   PlusSquare,
   Radio,
   ScrollText,
@@ -17,7 +18,7 @@ import {
   Users,
 } from "lucide-react";
 import { agent } from "@/lib/agent";
-import { requireSession } from "@/lib/auth";
+import { isSuperAdmin, requireSession } from "@/lib/auth";
 import { getLiveAccessPublicState } from "@/lib/liveAccess";
 import {
   hasAnyPermission,
@@ -25,9 +26,18 @@ import {
   isAdminRole,
   isAppAllowed,
   isDomainAllowed,
+  isHostingAdmin,
+  isVpsAdmin,
   roleDisplayLabel,
 } from "@/lib/permissions";
+import {
+  getHostCapacity,
+  listHostingAccountsForUser,
+  listVpsInstancesForUser,
+} from "@/lib/provisioning";
+import { findPanelOffer } from "@/lib/panelOffers";
 import { getServerAddress } from "@/lib/serverAddress";
+import CapacityPool from "@/components/CapacityPool/CapacityPool";
 import HealthChart from "@/components/HealthChart/HealthChart";
 import Table from "@/components/Table/Table";
 import styles from "@/components/page.module.css";
@@ -50,13 +60,19 @@ export default async function DashboardPage() {
   const canDomains = hasPermission(session, "domains");
   const canFolders = hasAnyPermission(session, ["files", "services"]);
   const isAdmin = isAdminRole(session.role);
+  const superAdmin = isSuperAdmin(session.role);
+  const vpsAdmin = isVpsAdmin(session.role);
+  const hostingAdmin = isHostingAdmin(session.role);
 
-  const [info, rawApps, rawCerts, address] = await Promise.all([
+  const [info, rawApps, rawCerts, address, hostCapacity] = await Promise.all([
     agent.sysinfo().catch(() => null),
     canApps ? agent.apps.list().catch(() => null) : Promise.resolve(null),
     canDomains ? agent.ssl.list().catch(() => null) : Promise.resolve(null),
     getServerAddress().catch(() => ({ domain: null, ip: null })),
+    superAdmin ? getHostCapacity().catch(() => null) : Promise.resolve(null),
   ]);
+  const myVpsList = vpsAdmin ? listVpsInstancesForUser(session.userId) : [];
+  const myHostingList = hostingAdmin ? listHostingAccountsForUser(session.userId) : [];
   const liveAccess = getLiveAccessPublicState();
 
   const apps = rawApps ? rawApps.filter((a) => isAppAllowed(session, a.name)) : null;
@@ -99,6 +115,42 @@ export default async function DashboardPage() {
         : "ok";
 
   const hubItems: HubItem[] = [];
+  if (superAdmin) {
+    hubItems.push(
+      {
+        href: "/packages",
+        label: "Packages Builder",
+        sub: "VPS & Hosting plans & quotas",
+        icon: <Package size={16} />,
+      },
+      {
+        href: "/vps",
+        label: "VPS Provisioning",
+        sub: "Allocate VPS RAM/CPU/Disk",
+        icon: <Server size={16} />,
+      },
+      {
+        href: "/hosting",
+        label: "Web Hosting",
+        sub: "Register hosting & admin roles",
+        icon: <Globe size={16} />,
+      },
+    );
+  } else if (vpsAdmin) {
+    hubItems.push({
+      href: "/vps",
+      label: "My VPS & Panel",
+      sub: "SSH IP & Paix Free / BYO panel",
+      icon: <Server size={16} />,
+    });
+  } else if (hostingAdmin) {
+    hubItems.push({
+      href: "/hosting",
+      label: "My Hosting Plan",
+      sub: "Quotas, DNS & cPanel essentials",
+      icon: <Globe size={16} />,
+    });
+  }
   if (canApps) {
     hubItems.push(
       {
@@ -313,6 +365,62 @@ export default async function DashboardPage() {
           tone={diskTone}
         />
       </div>
+
+      {superAdmin && hostCapacity && (
+        <CapacityPool
+          capacity={hostCapacity}
+          title="Super Admin Resource Pool (Remaining After VPS & Hosting Allocations)"
+        />
+      )}
+
+      {vpsAdmin && myVpsList.length > 0 && (
+        <div className={styles.section}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+            <div>
+              <h2 className={styles.sectionTitle} style={{ margin: 0 }}>
+                My VPS: {myVpsList[0].name} ({myVpsList[0].package_name})
+              </h2>
+              <div className={styles.muted} style={{ fontSize: 12, marginTop: 2 }}>
+                {myVpsList[0].cpu_cores} vCPU ·{" "}
+                {myVpsList[0].ram_mb >= 1024
+                  ? `${(myVpsList[0].ram_mb / 1024).toFixed(1)} GB`
+                  : `${myVpsList[0].ram_mb} MB`}{" "}
+                RAM · {myVpsList[0].storage_gb} GB Storage · SSH:{" "}
+                <span className={styles.code}>
+                  {myVpsList[0].ssh_user}@{myVpsList[0].ssh_ip}:{myVpsList[0].ssh_port}
+                </span>{" "}
+                · Panel: <strong>{findPanelOffer(myVpsList[0].panel_choice).name}</strong>
+              </div>
+            </div>
+            <Link href="/vps" className={styles.btn}>
+              SSH &amp; Panel Choice
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {hostingAdmin && myHostingList.length > 0 && (
+        <div className={styles.section}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+            <div>
+              <h2 className={styles.sectionTitle} style={{ margin: 0 }}>
+                My Web Hosting: {myHostingList[0].domain} ({myHostingList[0].package_name})
+              </h2>
+              <div className={styles.muted} style={{ fontSize: 12, marginTop: 2 }}>
+                {myHostingList[0].storage_gb} GB Storage ·{" "}
+                {myHostingList[0].bandwidth_gb > 0
+                  ? `${myHostingList[0].bandwidth_gb} GB BW`
+                  : "Unlimited BW"}{" "}
+                · {myHostingList[0].max_databases === 0 ? "∞" : myHostingList[0].max_databases} DBs ·{" "}
+                {myHostingList[0].max_mailboxes === 0 ? "∞" : myHostingList[0].max_mailboxes} Mailboxes
+              </div>
+            </div>
+            <Link href="/hosting" className={styles.btn}>
+              Open Hosting Center
+            </Link>
+          </div>
+        </div>
+      )}
 
       {hubItems.length > 0 && (
         <div className={styles.section}>

@@ -3,6 +3,7 @@ import http from "node:http";
 import { relayBody } from "@/lib/agent";
 import { config } from "@/lib/config";
 import { getSession, hasPermission } from "@/lib/auth";
+import { previewDownloadFile } from "@/lib/agentPreview";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -36,6 +37,21 @@ export async function GET(req: NextRequest) {
 
   const query = new URLSearchParams({ root, path });
   if (sp.get("inline") === "1") query.set("inline", "true");
+
+  if (config.isPreviewMock) {
+    const res = previewDownloadFile({
+      root,
+      path,
+      inline: sp.get("inline") === "1",
+    });
+    const headers = new Headers(res.headers);
+    headers.set("Cache-Control", "private, no-store");
+    if (res.code >= 400 && !headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
+    const body = typeof res.body === "string" ? res.body : new Uint8Array(res.body);
+    return new Response(body, { status: res.code, headers });
+  }
 
   return new Promise<Response>((resolve) => {
     const upstream = http.request(

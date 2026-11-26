@@ -234,6 +234,95 @@ function applyMigrations(handle: Database.Database) {
       used_by         TEXT,
       created_at      TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- Super-Admin-authored packages for VPS and Web Hosting provisioning.
+    CREATE TABLE IF NOT EXISTS service_packages (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      name              TEXT NOT NULL UNIQUE,
+      slug              TEXT NOT NULL UNIQUE,
+      kind              TEXT NOT NULL CHECK(kind IN ('vps', 'hosting')),
+      description       TEXT NOT NULL DEFAULT '',
+      cpu_cores         REAL NOT NULL DEFAULT 1,
+      ram_mb            INTEGER NOT NULL DEFAULT 1024,
+      storage_gb        INTEGER NOT NULL DEFAULT 20,
+      swap_mb           INTEGER NOT NULL DEFAULT 512,
+      bandwidth_gb      INTEGER NOT NULL DEFAULT 1000,
+      port_speed_mbps   INTEGER NOT NULL DEFAULT 1000,
+      max_domains       INTEGER NOT NULL DEFAULT 5,
+      max_subdomains    INTEGER NOT NULL DEFAULT 20,
+      max_apps          INTEGER NOT NULL DEFAULT 5,
+      max_databases     INTEGER NOT NULL DEFAULT 5,
+      max_mailboxes     INTEGER NOT NULL DEFAULT 10,
+      mailbox_quota_mb  INTEGER NOT NULL DEFAULT 1024,
+      max_ftp_accounts  INTEGER NOT NULL DEFAULT 5,
+      backup_slots      INTEGER NOT NULL DEFAULT 3,
+      ssh_access        INTEGER NOT NULL DEFAULT 1,
+      ssl_included      INTEGER NOT NULL DEFAULT 1,
+      dedicated_ip      INTEGER NOT NULL DEFAULT 0,
+      price_label       TEXT NOT NULL DEFAULT 'Free / Custom',
+      billing_cycle     TEXT NOT NULL DEFAULT 'monthly',
+      is_active         INTEGER NOT NULL DEFAULT 1,
+      created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Provisioned VPS tenants owned by a vps_admin user. Active & suspended
+    -- rows deduct their allocated cpu_cores, ram_mb, storage_gb, bandwidth_gb
+    -- from the host capacity pool.
+    CREATE TABLE IF NOT EXISTS vps_instances (
+      id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+      name                 TEXT NOT NULL UNIQUE,
+      user_id              INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      package_id           INTEGER NOT NULL REFERENCES service_packages(id),
+      status               TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'suspended', 'terminated')),
+      ssh_ip               TEXT NOT NULL DEFAULT '',
+      ssh_port             INTEGER NOT NULL DEFAULT 22,
+      ssh_user             TEXT NOT NULL DEFAULT 'root',
+      linux_user           TEXT NOT NULL DEFAULT '',
+      os_template          TEXT NOT NULL DEFAULT 'Ubuntu 24.04 LTS',
+      panel_choice         TEXT NOT NULL DEFAULT 'paix',
+      custom_panel_name    TEXT NOT NULL DEFAULT '',
+      custom_panel_url     TEXT NOT NULL DEFAULT '',
+      custom_installer_cmd TEXT NOT NULL DEFAULT '',
+      cpu_cores            REAL NOT NULL DEFAULT 1,
+      ram_mb               INTEGER NOT NULL DEFAULT 1024,
+      storage_gb           INTEGER NOT NULL DEFAULT 20,
+      bandwidth_gb         INTEGER NOT NULL DEFAULT 1000,
+      storage_used_mb      INTEGER NOT NULL DEFAULT 0,
+      bandwidth_used_gb    REAL NOT NULL DEFAULT 0,
+      notes                TEXT NOT NULL DEFAULT '',
+      created_at           TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_vps_instances_user ON vps_instances (user_id);
+    CREATE INDEX IF NOT EXISTS idx_vps_instances_status ON vps_instances (status);
+
+    -- Provisioned Web Hosting accounts owned by a hosting_admin user.
+    CREATE TABLE IF NOT EXISTS hosting_accounts (
+      id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+      label                TEXT NOT NULL,
+      domain               TEXT NOT NULL UNIQUE,
+      user_id              INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      package_id           INTEGER NOT NULL REFERENCES service_packages(id),
+      status               TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'suspended', 'terminated')),
+      root_dir             TEXT NOT NULL DEFAULT '/var/www',
+      linux_user           TEXT NOT NULL DEFAULT '',
+      cpu_cores            REAL NOT NULL DEFAULT 0,
+      ram_mb               INTEGER NOT NULL DEFAULT 256,
+      storage_gb           INTEGER NOT NULL DEFAULT 10,
+      bandwidth_gb         INTEGER NOT NULL DEFAULT 500,
+      max_domains          INTEGER NOT NULL DEFAULT 1,
+      max_subdomains       INTEGER NOT NULL DEFAULT 10,
+      max_apps             INTEGER NOT NULL DEFAULT 2,
+      max_databases        INTEGER NOT NULL DEFAULT 3,
+      max_mailboxes        INTEGER NOT NULL DEFAULT 5,
+      max_ftp_accounts     INTEGER NOT NULL DEFAULT 3,
+      backup_slots         INTEGER NOT NULL DEFAULT 2,
+      ssh_access           INTEGER NOT NULL DEFAULT 0,
+      ssl_included         INTEGER NOT NULL DEFAULT 1,
+      notes                TEXT NOT NULL DEFAULT '',
+      created_at           TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_hosting_accounts_user ON hosting_accounts (user_id);
+    CREATE INDEX IF NOT EXISTS idx_hosting_accounts_status ON hosting_accounts (status);
   `);
 
   migrateSitesSchema(handle);

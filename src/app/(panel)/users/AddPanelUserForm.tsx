@@ -114,6 +114,8 @@ export default function AddPanelUserForm({
             onChange={(e) => setRole(e.target.value as UserRole)}
           >
             <option value="user">user (assigned tasks only)</option>
+            <option value="hosting_admin">hosting_admin (web hosting account admin)</option>
+            <option value="vps_admin">vps_admin (VPS server admin)</option>
             {canCreateAdmins && <option value="admin">admin (manage server &amp; users)</option>}
             {canCreateAdmins && <option value="super_admin">super_admin (full root control)</option>}
           </select>
@@ -182,7 +184,7 @@ export default function AddPanelUserForm({
         </>
       )}
 
-      {role === "user" && (
+      {role !== "admin" && role !== "super_admin" && (
         <div className={usersStyles.permBox}>
           <div className={usersStyles.permTitle}>Assigned tasks &amp; permissions</div>
           <p className={styles.muted} style={{ fontSize: 12, margin: "0 0 10px" }}>

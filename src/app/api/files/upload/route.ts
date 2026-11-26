@@ -6,6 +6,7 @@ import { getSession, hasPermission } from "@/lib/auth";
 import { writeAudit } from "@/lib/audit";
 import { originRefusal } from "@/lib/csrf";
 import { uploadLimitMb } from "@/lib/uploadLimit";
+import { previewUploadFile } from "@/lib/agentPreview";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -55,7 +56,37 @@ export async function POST(req: NextRequest) {
   const status: Relayed =
     declared !== null && declared > limit
       ? tooLarge
-      : await new Promise<Relayed>((resolve) => {
+      : config.isPreviewMock
+        ? await (async () => {
+            const chunks: Buffer[] = [];
+            let received = 0;
+            const reader = req.body!.getReader();
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              if (value) {
+                received += value.byteLength;
+                if (received > limit) return tooLarge;
+                chunks.push(Buffer.from(value));
+              }
+            }
+            if (declared !== null && received !== declared) {
+              return {
+                code: 400,
+                body: JSON.stringify({
+                  error: `the upload was cut short: ${received} of ${declared} bytes arrived`,
+                }),
+              };
+            }
+            return previewUploadFile({
+              root,
+              path: sp.get("path") ?? "",
+              name,
+              data: Buffer.concat(chunks),
+              overwrite: sp.get("overwrite") === "1",
+            });
+          })()
+        : await new Promise<Relayed>((resolve) => {
           // Why the panel stopped the relay, when it did: that is the answer,
           // not the error the broken stream then causes on the agent side.
           let stopped: Relayed | null = null;

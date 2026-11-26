@@ -1,4 +1,10 @@
-export const USER_ROLES = ["super_admin", "admin", "user"] as const;
+export const USER_ROLES = [
+  "super_admin",
+  "admin",
+  "vps_admin",
+  "hosting_admin",
+  "user",
+] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
 export const PERMISSION_KEYS = [
@@ -160,9 +166,39 @@ export const RUNTIME_DEPLOY_MAP: Record<string, string> = {
   dotnet: "dotnet",
 };
 
+export const DEFAULT_VPS_ADMIN_MODULES: PermissionKey[] = [
+  "apps",
+  "domains",
+  "databases",
+  "mail",
+  "files",
+  "backups",
+  "cron",
+  "logs",
+  "terminal",
+  "security",
+  "services",
+];
+
+export function defaultHostingAdminModules(sshAccess: boolean): PermissionKey[] {
+  return [
+    "apps",
+    "domains",
+    "databases",
+    "mail",
+    "files",
+    "backups",
+    "cron",
+    "logs",
+    ...(sshAccess ? (["terminal", "security"] as PermissionKey[]) : []),
+  ];
+}
+
 export function normalizeRole(role: string | null | undefined): UserRole {
   if (role === "super_admin") return "super_admin";
   if (role === "admin") return "admin";
+  if (role === "vps_admin") return "vps_admin";
+  if (role === "hosting_admin") return "hosting_admin";
   return "user";
 }
 
@@ -174,9 +210,23 @@ export function isAdminRole(role: string | null | undefined): boolean {
   return role === "super_admin" || role === "admin";
 }
 
+export function isVpsAdmin(role: string | null | undefined): boolean {
+  return role === "vps_admin";
+}
+
+export function isHostingAdmin(role: string | null | undefined): boolean {
+  return role === "hosting_admin";
+}
+
+export function isTenantRole(role: string | null | undefined): boolean {
+  return role === "vps_admin" || role === "hosting_admin";
+}
+
 export function roleDisplayLabel(role: string | null | undefined): string {
   if (role === "super_admin") return "Super Admin";
   if (role === "admin") return "Admin";
+  if (role === "vps_admin") return "VPS Admin";
+  if (role === "hosting_admin") return "Hosting Admin";
   return "User";
 }
 

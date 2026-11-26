@@ -238,7 +238,7 @@ DEBIAN_FRONTEND=noninteractive apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y "${APT_KEEP_CONF[@]}" --no-install-recommends \
   curl ca-certificates gnupg lsb-release software-properties-common \
   build-essential pkg-config libssl-dev libsqlite3-dev libmariadb-dev \
-  jq acl htop iotop iftop ncdu rsync sudo bind9-dnsutils \
+  jq acl htop iotop iftop ncdu rsync sudo bind9-dnsutils zip unzip \
   nginx \
   mariadb-server mariadb-client \
   pdns-server pdns-backend-mysql \

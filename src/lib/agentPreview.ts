@@ -1,6 +1,7 @@
 import "server-only";
 import os from "node:os";
 import fs from "node:fs";
+import AdmZip from "adm-zip";
 import type {
   AppRow,
   CertRow,
@@ -75,6 +76,7 @@ type PreviewState = {
   swappiness: number;
   trash: TrashRow[];
   filesByRoot: Record<string, Record<string, FileEntry[]>>;
+  fileContentsByRoot: Record<string, Record<string, string>>;
   webmailMessages: Record<string, WebmailMessageDetail[]>;
   sshLogs: SshLogEvent[];
   sshSessions: SshActiveSession[];
@@ -411,6 +413,19 @@ function getState(): PreviewState {
           { name: "sql-dumps", kind: "dir", size: 4096, modified: new Date().toISOString(), mode: "0755", owner: "root", group: "root", link_target: null, link_is_dir: false, locked: false },
         ],
       },
+    },
+    fileContentsByRoot: {
+      apps: {
+        "core-api/package.json": Buffer.from(
+          JSON.stringify({ name: "core-api", version: "1.0.0", scripts: { start: "node dist/index.js" } }, null, 2),
+          "utf8",
+        ).toString("base64"),
+        "core-api/.env.production": Buffer.from("NODE_ENV=production\nPORT=4001\n", "utf8").toString("base64"),
+      },
+      www: {
+        "docs/index.html": Buffer.from("<!doctype html><html><body><h1>Docs</h1></body></html>\n", "utf8").toString("base64"),
+      },
+      drive: {},
     },
     webmailMessages: {
       "admin@paixpanel.local": [
@@ -1284,28 +1299,299 @@ export async function handlePreviewAgentRequest<T>(
 
   // Files
   if (m === "GET" && pathname === "/files/roots") {
-    const roots: FileRoot[] = [
-      { id: "apps", label: "Apps", path: "/srv/apps", description: "Deployed app source folders", writable: true, exists: true },
-      { id: "www", label: "Web roots", path: "/var/www", description: "Static folder sites", writable: true, exists: true },
-      { id: "drive", label: "Drive", path: "/var/lib/vps-panel/drive", description: "Staged SQL dumps and uploads", writable: true, exists: true },
-      { id: "logs", label: "Nginx logs", path: "/var/log/nginx", description: "Access & error logs (read-only)", writable: false, exists: true },
-    ];
-    return roots as T;
+    return previewFileRoots() as T;
   }
   if (m === "GET" && pathname === "/files/list") {
     const rootId = params.get("root") ?? "apps";
-    const rel = params.get("path") ?? "";
-    const entries = s.filesByRoot[rootId]?.[rel] ?? [];
+    const rel = cleanPreviewRel(params.get("path") ?? "");
+    const rootMeta = previewFileRoots().find((r) => r.id === rootId);
+    if (!rootMeta) throw new Error(`agent 404: ${JSON.stringify({ error: `unknown root "${rootId}"` })}`);
+    if (!s.filesByRoot[rootId]) s.filesByRoot[rootId] = { "": [] };
+    if (!(rel in s.filesByRoot[rootId])) {
+      throw new Error(`agent 404: ${JSON.stringify({ error: "not found" })}`);
+    }
+    const entries = sortPreviewEntries([...(s.filesByRoot[rootId][rel] ?? [])]);
     return {
-      root: { id: rootId, label: rootId, path: `/srv/${rootId}`, description: "", writable: rootId !== "logs", exists: true },
+      root: rootMeta,
       path: rel,
-      abs_path: rel ? `/srv/${rootId}/${rel}` : `/srv/${rootId}`,
-      writable: rootId !== "logs",
+      abs_path: rel ? `${rootMeta.path}/${rel}` : rootMeta.path,
+      writable: rootMeta.writable,
       entries,
       truncated: false,
     } as T;
   }
+  if (m === "POST" && pathname === "/files/mkdir") {
+    const rootId = String(b.root ?? "");
+    const dirRel = cleanPreviewRel(String(b.path ?? ""));
+    const name = validatePreviewName(String(b.name ?? ""));
+    const existOk = Boolean(b.exist_ok);
+    const rootMeta = requireWritableRoot(rootId);
+    ensurePreviewDirChain(s, rootId, dirRel);
+    const list = s.filesByRoot[rootId][dirRel] ?? [];
+    const existing = list.find((e) => e.name === name);
+    const fullRel = joinPreviewRel(dirRel, name);
+    if (existing) {
+      if (existOk && existing.kind === "dir") {
+        return { ok: true, path: fullRel } as T;
+      }
+      throw new Error(`agent 409: ${JSON.stringify({ error: `"${name}" already exists here` })}`);
+    }
+    list.push(makePreviewEntry(name, "dir", 4096));
+    s.filesByRoot[rootId][dirRel] = sortPreviewEntries(list);
+    if (!s.filesByRoot[rootId][fullRel]) s.filesByRoot[rootId][fullRel] = [];
+    void rootMeta;
+    return { ok: true, path: fullRel } as T;
+  }
+  if (m === "POST" && pathname === "/files/new-file") {
+    const rootId = String(b.root ?? "");
+    const dirRel = cleanPreviewRel(String(b.path ?? ""));
+    const name = validatePreviewName(String(b.name ?? ""));
+    requireWritableRoot(rootId);
+    ensurePreviewDirChain(s, rootId, dirRel);
+    const list = s.filesByRoot[rootId][dirRel] ?? [];
+    if (list.some((e) => e.name === name)) {
+      throw new Error(`agent 409: ${JSON.stringify({ error: `"${name}" already exists here` })}`);
+    }
+    const fullRel = joinPreviewRel(dirRel, name);
+    list.push(makePreviewEntry(name, "file", 0));
+    s.filesByRoot[rootId][dirRel] = sortPreviewEntries(list);
+    if (!s.fileContentsByRoot[rootId]) s.fileContentsByRoot[rootId] = {};
+    s.fileContentsByRoot[rootId][fullRel] = "";
+    return { ok: true, path: fullRel } as T;
+  }
+  if (m === "POST" && pathname === "/files/rename") {
+    const rootId = String(b.root ?? "");
+    const rel = cleanPreviewRel(String(b.path ?? ""));
+    const newName = validatePreviewName(String(b.new_name ?? ""));
+    requireWritableRoot(rootId);
+    const parentRel = previewParentRel(rel);
+    const oldName = rel.split("/").pop() ?? "";
+    const list = s.filesByRoot[rootId]?.[parentRel];
+    if (!list) throw new Error(`agent 404: ${JSON.stringify({ error: "not found" })}`);
+    const item = list.find((e) => e.name === oldName);
+    if (!item) throw new Error(`agent 404: ${JSON.stringify({ error: "not found" })}`);
+    const nextRel = joinPreviewRel(parentRel, newName);
+    if (oldName !== newName) {
+      if (list.some((e) => e.name === newName)) {
+        throw new Error(`agent 409: ${JSON.stringify({ error: `"${newName}" already exists here` })}`);
+      }
+      item.name = newName;
+      item.modified = new Date().toISOString();
+      s.filesByRoot[rootId][parentRel] = sortPreviewEntries(list);
+      rekeyPreviewTree(s, rootId, rel, nextRel);
+    }
+    return { ok: true, path: nextRel } as T;
+  }
+  if (m === "POST" && pathname === "/files/move") {
+    const rootId = String(b.root ?? "");
+    const paths = Array.isArray(b.paths) ? b.paths.map((p) => cleanPreviewRel(String(p))) : [];
+    const dest = cleanPreviewRel(String(b.dest ?? ""));
+    requireWritableRoot(rootId);
+    ensurePreviewDirChain(s, rootId, dest);
+    let moved = 0;
+    const errors: string[] = [];
+    for (const rel of paths) {
+      const parentRel = previewParentRel(rel);
+      const name = rel.split("/").pop() ?? "";
+      if (!name) continue;
+      if (dest === rel || dest.startsWith(`${rel}/`)) {
+        errors.push(`${rel}: cannot move a folder into itself`);
+        continue;
+      }
+      const srcList = s.filesByRoot[rootId]?.[parentRel] ?? [];
+      const idx = srcList.findIndex((e) => e.name === name);
+      if (idx === -1) {
+        errors.push(`${rel}: not found`);
+        continue;
+      }
+      const dstList = s.filesByRoot[rootId]?.[dest] ?? [];
+      if (dstList.some((e) => e.name === name)) {
+        errors.push(`${rel}: already exists in the destination`);
+        continue;
+      }
+      const [entry] = srcList.splice(idx, 1);
+      dstList.push(entry);
+      s.filesByRoot[rootId][dest] = sortPreviewEntries(dstList);
+      rekeyPreviewTree(s, rootId, rel, joinPreviewRel(dest, name));
+      moved++;
+    }
+    return { ok: errors.length === 0, moved, errors } as T;
+  }
+  if (m === "POST" && pathname === "/files/compress") {
+    const rootId = String(b.root ?? "");
+    const dirRel = cleanPreviewRel(String(b.path ?? ""));
+    const paths = Array.isArray(b.paths) ? b.paths.map((p) => cleanPreviewRel(String(p))) : [];
+    const overwrite = Boolean(b.overwrite);
+    const rawArchive = String(b.archive_name ?? "").trim();
+    if (paths.length === 0) {
+      throw new Error(`agent 400: ${JSON.stringify({ error: "select at least one file or folder to compress" })}`);
+    }
+    const archiveName = validatePreviewName(
+      rawArchive.toLowerCase().endsWith(".zip") ? rawArchive : `${rawArchive}.zip`,
+    );
+    requireWritableRoot(rootId);
+    ensurePreviewDirChain(s, rootId, dirRel);
+    const list = s.filesByRoot[rootId]?.[dirRel] ?? [];
+    if (!overwrite && list.some((e) => e.name === archiveName)) {
+      throw new Error(`agent 409: ${JSON.stringify({ error: `"${archiveName}" already exists here` })}`);
+    }
+    const zip = new AdmZip();
+    const contents = (s.fileContentsByRoot[rootId] ??= {});
+
+    const addFolderRecursive = (relFolder: string, zipBase: string) => {
+      const children = s.filesByRoot[rootId]?.[relFolder] ?? [];
+      if (children.length === 0) {
+        zip.addFile(`${zipBase.replace(/\/+$/, "")}/`, Buffer.alloc(0));
+        return;
+      }
+      for (const child of children) {
+        const childRel = joinPreviewRel(relFolder, child.name);
+        const childZip = `${zipBase}/${child.name}`;
+        if (child.kind === "dir") {
+          addFolderRecursive(childRel, childZip);
+        } else {
+          const b64 = contents[childRel] ?? "";
+          zip.addFile(childZip, Buffer.from(b64, "base64"));
+        }
+      }
+    };
+
+    for (const rel of paths) {
+      const name = rel.split("/").pop() ?? "";
+      const entry = list.find((e) => e.name === name);
+      if (!entry || previewParentRel(rel) !== dirRel) {
+        throw new Error(`agent 404: ${JSON.stringify({ error: `${rel} not found in current folder` })}`);
+      }
+      if (entry.kind === "dir") {
+        addFolderRecursive(rel, name);
+      } else {
+        const b64 = contents[rel] ?? "";
+        zip.addFile(name, Buffer.from(b64, "base64"));
+      }
+    }
+
+    const buf = zip.toBuffer();
+    const outRel = joinPreviewRel(dirRel, archiveName);
+    contents[outRel] = buf.toString("base64");
+    const nextEntry = makePreviewEntry(archiveName, "file", buf.length);
+    const filtered = list.filter((e) => e.name !== archiveName);
+    filtered.push(nextEntry);
+    s.filesByRoot[rootId][dirRel] = sortPreviewEntries(filtered);
+    return { ok: true, path: outRel, size: buf.length } as T;
+  }
+  if (m === "POST" && pathname === "/files/extract") {
+    const rootId = String(b.root ?? "");
+    const archiveRel = cleanPreviewRel(String(b.path ?? ""));
+    const overwrite = Boolean(b.overwrite);
+    requireWritableRoot(rootId);
+    if (!archiveRel.toLowerCase().endsWith(".zip")) {
+      throw new Error(`agent 400: ${JSON.stringify({ error: "only .zip archives can be extracted here" })}`);
+    }
+    const b64 = s.fileContentsByRoot[rootId]?.[archiveRel];
+    if (b64 === undefined) {
+      throw new Error(`agent 404: ${JSON.stringify({ error: "archive not found" })}`);
+    }
+    const rawDest = typeof b.dest === "string" && b.dest.trim() ? b.dest : previewParentRel(archiveRel);
+    const destRel = cleanPreviewRel(rawDest);
+
+    let zip: AdmZip;
+    try {
+      zip = new AdmZip(Buffer.from(b64, "base64"));
+    } catch {
+      throw new Error(`agent 400: ${JSON.stringify({ error: "not a valid .zip archive" })}`);
+    }
+
+    const entries = zip.getEntries();
+    const plan: { parts: string[]; isDir: boolean; data: Buffer }[] = [];
+    for (const ent of entries) {
+      const norm = ent.entryName.replace(/\\/g, "/");
+      if (norm.startsWith("/") || norm.includes("\0")) {
+        throw new Error(`agent 400: ${JSON.stringify({ error: `unsafe path in archive: ${ent.entryName}` })}`);
+      }
+      const parts = norm.split("/").filter((p) => p && p !== ".");
+      if (parts.length === 0) continue;
+      if (parts.some((p) => p === ".." || p.endsWith(":"))) {
+        throw new Error(`agent 400: ${JSON.stringify({ error: `unsafe traversal in archive: ${ent.entryName}` })}`);
+      }
+      const isDir = ent.isDirectory || norm.endsWith("/");
+      const targetRel = joinPreviewRel(destRel, parts.join("/"));
+      const parentRel = previewParentRel(targetRel);
+      const leafName = parts[parts.length - 1];
+      const existing = (s.filesByRoot[rootId]?.[parentRel] ?? []).find((e) => e.name === leafName);
+      if (existing && !isDir && existing.kind === "file" && !overwrite) {
+        throw new Error(
+          `agent 409: ${JSON.stringify({ error: `${parts.join("/")} already exists (enable Overwrite to replace it)` })}`,
+        );
+      }
+      plan.push({ parts, isDir, data: isDir ? Buffer.alloc(0) : ent.getData() });
+    }
+
+    ensurePreviewDirChain(s, rootId, destRel);
+    const contents = (s.fileContentsByRoot[rootId] ??= {});
+    let extracted = 0;
+    for (const item of plan) {
+      if (item.isDir) {
+        ensurePreviewDirChain(s, rootId, joinPreviewRel(destRel, item.parts.join("/")));
+        extracted++;
+        continue;
+      }
+      const fullRel = joinPreviewRel(destRel, item.parts.join("/"));
+      const parentRel = previewParentRel(fullRel);
+      const leafName = item.parts[item.parts.length - 1];
+      ensurePreviewDirChain(s, rootId, parentRel);
+      contents[fullRel] = item.data.toString("base64");
+      const list = (s.filesByRoot[rootId][parentRel] ?? []).filter((e) => e.name !== leafName);
+      list.push(makePreviewEntry(leafName, "file", item.data.length));
+      s.filesByRoot[rootId][parentRel] = sortPreviewEntries(list);
+      extracted++;
+    }
+    return { ok: true, dest: destRel, extracted } as T;
+  }
   if (m === "GET" && pathname === "/files/trash") return s.trash as T;
+  if (m === "POST" && pathname === "/files/trash") {
+    const rootId = String(b.root ?? "");
+    const paths = Array.isArray(b.paths) ? b.paths.map((p) => cleanPreviewRel(String(p))) : [];
+    const rootMeta = requireWritableRoot(rootId);
+    let trashed = 0;
+    const errors: string[] = [];
+    for (const rel of paths) {
+      const parentRel = previewParentRel(rel);
+      const name = rel.split("/").pop() ?? "";
+      const list = s.filesByRoot[rootId]?.[parentRel] ?? [];
+      const idx = list.findIndex((e) => e.name === name);
+      if (idx === -1) {
+        errors.push(`${rel}: not found`);
+        continue;
+      }
+      const [entry] = list.splice(idx, 1);
+      s.trash.unshift({
+        id: `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`,
+        name: entry.name,
+        kind: entry.kind,
+        root_id: rootId,
+        original_path: `${rootMeta.path}/${rel}`,
+        size: entry.size,
+        trashed_at: new Date().toISOString(),
+        days_left: 30,
+      });
+      trashed++;
+    }
+    return { ok: errors.length === 0, trashed, errors } as T;
+  }
+  if (m === "POST" && pathname === "/files/trash/restore") {
+    const id = String(b.id ?? "");
+    s.trash = s.trash.filter((t) => t.id !== id);
+    return { ok: true, restored_to: "/srv/apps/restored" } as T;
+  }
+  if (m === "POST" && pathname === "/files/trash/empty") {
+    s.trash = [];
+    return { ok: true } as T;
+  }
+  if (m === "DELETE" && pathname.startsWith("/files/trash/")) {
+    const id = decodeURIComponent(pathname.slice("/files/trash/".length));
+    s.trash = s.trash.filter((t) => t.id !== id);
+    return { ok: true } as T;
+  }
 
   // Services, system, backups, tasks, quickInstall, docker, tailscale, privacy
   if (m === "GET" && pathname === "/services") return s.services as T;
@@ -1490,3 +1776,199 @@ export async function handlePreviewAgentRequest<T>(
 
   return { ok: true } as T;
 }
+
+function previewFileRoots(): FileRoot[] {
+  return [
+    { id: "apps", label: "Apps", path: "/srv/apps", description: "Source trees of every deployed app.", writable: true, exists: true },
+    { id: "drive", label: "Drive", path: "/srv/drive", description: "Your files. Nothing here is read or touched by the panel.", writable: true, exists: true },
+    { id: "www", label: "Web root", path: "/var/www", description: "Document roots for folder-mode sites.", writable: true, exists: true },
+    { id: "logs", label: "Logs", path: "/var/log", description: "System and service logs. Browse-only.", writable: false, exists: true },
+  ];
+}
+
+function requireWritableRoot(rootId: string): FileRoot {
+  const rootMeta = previewFileRoots().find((r) => r.id === rootId);
+  if (!rootMeta) {
+    throw new Error(`agent 400: ${JSON.stringify({ error: `unknown root "${rootId}"` })}`);
+  }
+  if (!rootMeta.writable) {
+    throw new Error(`agent 400: ${JSON.stringify({ error: `the ${rootMeta.label} root is browse-only` })}`);
+  }
+  return rootMeta;
+}
+
+function cleanPreviewRel(rel: string): string {
+  const parts = rel
+    .replace(/^\/+/, "")
+    .split("/")
+    .filter((p) => p && p !== ".");
+  if (parts.some((p) => p === ".." || p.includes("\0"))) {
+    throw new Error(`agent 400: ${JSON.stringify({ error: "`..` is not allowed in a path" })}`);
+  }
+  return parts.join("/");
+}
+
+function validatePreviewName(raw: string): string {
+  if (!raw || raw === "." || raw === ".." || raw.includes("/") || raw.includes("\0") || raw.trim() !== raw) {
+    throw new Error(`agent 400: ${JSON.stringify({ error: `invalid name "${raw}"` })}`);
+  }
+  return raw;
+}
+
+function joinPreviewRel(dir: string, name: string): string {
+  const d = dir.replace(/^\/+|\/+$/g, "");
+  return d ? `${d}/${name}` : name;
+}
+
+function previewParentRel(rel: string): string {
+  const i = rel.lastIndexOf("/");
+  return i === -1 ? "" : rel.slice(0, i);
+}
+
+function makePreviewEntry(name: string, kind: "dir" | "file", size: number): FileEntry {
+  return {
+    name,
+    kind,
+    size,
+    modified: new Date().toISOString(),
+    mode: kind === "dir" ? "0755" : "0644",
+    owner: "root",
+    group: "root",
+    link_target: null,
+    link_is_dir: false,
+    locked: false,
+  };
+}
+
+function sortPreviewEntries(entries: FileEntry[]): FileEntry[] {
+  return entries.sort((a, b) => {
+    const aDir = a.kind === "dir" || (a.kind === "symlink" && a.link_is_dir);
+    const bDir = b.kind === "dir" || (b.kind === "symlink" && b.link_is_dir);
+    if (aDir !== bDir) return aDir ? -1 : 1;
+    return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+  });
+}
+
+function ensurePreviewDirChain(s: PreviewState, rootId: string, relDir: string) {
+  const rootMap = (s.filesByRoot[rootId] ??= { "": [] });
+  if (!rootMap[""]) rootMap[""] = [];
+  if (!relDir) return;
+  const parts = relDir.split("/").filter(Boolean);
+  let cur = "";
+  for (const part of parts) {
+    const parent = cur;
+    cur = cur ? `${cur}/${part}` : part;
+    const parentList = (rootMap[parent] ??= []);
+    if (!parentList.some((e) => e.name === part)) {
+      parentList.push(makePreviewEntry(part, "dir", 4096));
+      rootMap[parent] = sortPreviewEntries(parentList);
+    }
+    if (!rootMap[cur]) rootMap[cur] = [];
+  }
+}
+
+function rekeyPreviewTree(s: PreviewState, rootId: string, oldRel: string, newRel: string) {
+  const dirs = s.filesByRoot[rootId];
+  if (dirs) {
+    for (const key of Object.keys(dirs)) {
+      if (key === oldRel || key.startsWith(`${oldRel}/`)) {
+        const suffix = key.slice(oldRel.length);
+        dirs[`${newRel}${suffix}`] = dirs[key];
+        delete dirs[key];
+      }
+    }
+  }
+  const contents = s.fileContentsByRoot[rootId];
+  if (contents) {
+    for (const key of Object.keys(contents)) {
+      if (key === oldRel || key.startsWith(`${oldRel}/`)) {
+        const suffix = key.slice(oldRel.length);
+        contents[`${newRel}${suffix}`] = contents[key];
+        delete contents[key];
+      }
+    }
+  }
+}
+
+export function previewUploadFile(opts: {
+  root: string;
+  path: string;
+  name: string;
+  data: Buffer;
+  overwrite: boolean;
+}): { code: number; body: string } {
+  const s = getState();
+  try {
+    requireWritableRoot(opts.root);
+    const dirRel = cleanPreviewRel(opts.path);
+    const name = validatePreviewName(opts.name);
+    ensurePreviewDirChain(s, opts.root, dirRel);
+    const list = (s.filesByRoot[opts.root][dirRel] ??= []);
+    const existing = list.find((e) => e.name === name);
+    if (existing && !opts.overwrite) {
+      return { code: 409, body: JSON.stringify({ error: `"${name}" already exists here` }) };
+    }
+    if (existing && existing.kind !== "file") {
+      return { code: 409, body: JSON.stringify({ error: `"${name}" is a folder` }) };
+    }
+    const fullRel = joinPreviewRel(dirRel, name);
+    const contents = (s.fileContentsByRoot[opts.root] ??= {});
+    contents[fullRel] = opts.data.toString("base64");
+    const nextList = list.filter((e) => e.name !== name);
+    nextList.push(makePreviewEntry(name, "file", opts.data.length));
+    s.filesByRoot[opts.root][dirRel] = sortPreviewEntries(nextList);
+    return { code: 200, body: JSON.stringify({ ok: true, path: fullRel }) };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const m = /^agent (\d+): ([\s\S]*)$/.exec(msg);
+    if (m) return { code: Number(m[1]), body: m[2] };
+    return { code: 400, body: JSON.stringify({ error: msg }) };
+  }
+}
+
+export function previewDownloadFile(opts: {
+  root: string;
+  path: string;
+  inline?: boolean;
+}): { code: number; headers?: Record<string, string>; body: Buffer | string } {
+  const s = getState();
+  try {
+    const rel = cleanPreviewRel(opts.path);
+    const name = rel.split("/").pop() ?? "download";
+    const b64 = s.fileContentsByRoot[opts.root]?.[rel];
+    if (b64 === undefined) {
+      return { code: 404, body: JSON.stringify({ error: "not found" }) };
+    }
+    const data = Buffer.from(b64, "base64");
+    const ext = name.split(".").pop()?.toLowerCase() ?? "";
+    const mime =
+      ext === "zip"
+        ? "application/zip"
+        : ext === "png"
+          ? "image/png"
+          : ext === "jpg" || ext === "jpeg"
+            ? "image/jpeg"
+            : ext === "pdf"
+              ? "application/pdf"
+              : ext === "json"
+                ? "application/json"
+                : ["txt", "md", "log", "csv", "js", "ts", "css", "env", "conf"].includes(ext)
+                  ? "text/plain"
+                  : "application/octet-stream";
+    const inlineSafe = ["image/png", "image/jpeg", "application/pdf", "text/plain"].includes(mime);
+    const disp = opts.inline && inlineSafe ? "inline" : "attachment";
+    return {
+      code: 200,
+      headers: {
+        "content-type": mime,
+        "content-length": String(data.length),
+        "content-disposition": `${disp}; filename="${name.replace(/["\\]/g, "_")}"`,
+        "x-content-type-options": "nosniff",
+      },
+      body: data,
+    };
+  } catch (e: unknown) {
+    return { code: 400, body: JSON.stringify({ error: e instanceof Error ? e.message : String(e) }) };
+  }
+}
+

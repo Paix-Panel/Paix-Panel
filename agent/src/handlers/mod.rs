@@ -77,6 +77,8 @@ pub fn router(state: AppState) -> Router {
         .route("/files/new-file", post(files::new_file))
         .route("/files/rename", post(files::rename))
         .route("/files/move", post(files::move_items))
+        .route("/files/compress", post(files::compress))
+        .route("/files/extract", post(files::extract))
         .route("/files/upload", post(files::upload))
         .route("/files/download", get(files::download))
         .route(

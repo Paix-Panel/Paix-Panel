@@ -249,6 +249,8 @@ export default function PanelUserActions({
                   onChange={(e) => setEditRole(e.target.value as UserRole)}
                 >
                   <option value="user">user (assigned tasks only)</option>
+                  <option value="hosting_admin">hosting_admin (web hosting account admin)</option>
+                  <option value="vps_admin">vps_admin (VPS server admin)</option>
                   <option value="admin">admin (full server + user ops)</option>
                   <option value="super_admin">super_admin (full root control)</option>
                 </select>
@@ -282,7 +284,7 @@ export default function PanelUserActions({
             </label>
           </div>
 
-          {editRole === "user" ? (
+          {editRole !== "admin" && editRole !== "super_admin" ? (
             <div className={usersStyles.permBox}>
               <div className={usersStyles.permTitle}>Assigned tasks &amp; module permissions</div>
               <div className={usersStyles.templateRow}>

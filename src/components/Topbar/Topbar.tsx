@@ -24,7 +24,15 @@ export default function Topbar({ email, role, timezone }: Props) {
         {isAdmin && <UpdateButton />}
         <StatusBadge
           text={roleDisplayLabel(role)}
-          tone={role === "super_admin" ? "info" : role === "admin" ? "ok" : "muted"}
+          tone={
+            role === "super_admin"
+              ? "info"
+              : role === "admin" || role === "vps_admin"
+                ? "ok"
+                : role === "hosting_admin"
+                  ? "warn"
+                  : "muted"
+          }
         />
         <span className={styles.email}>{email}</span>
         <form action={logoutAction}>

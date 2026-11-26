@@ -5,9 +5,11 @@ import Link, { useLinkStatus } from "next/link";
 import { usePathname } from "next/navigation";
 import BoltMark from "@/components/BoltMark/BoltMark";
 import NavIcon, { type NavIconName } from "./NavIcon";
+import { Globe, Package, Server } from "lucide-react";
 import {
   hasPermission,
   isAdminRole,
+  isSuperAdmin,
   type PermissionKey,
   type UserPermissions,
   type UserRole,
@@ -18,16 +20,51 @@ type NavItem = {
   href: string;
   label: string;
   icon: NavIconName;
-  /** Required module permission. If omitted, checked via `adminOnly` or always visible. */
+  lucide?: "package" | "vps" | "hosting";
+  /** Required module permission. If omitted, checked via `adminOnly` / `superAdminOnly` / `roles`. */
   perm?: PermissionKey;
   /** Strictly requires admin or super_admin role. */
   adminOnly?: boolean;
+  /** Strictly requires super_admin role. */
+  superAdminOnly?: boolean;
+  /** Restrict visibility to specific roles. */
+  roles?: UserRole[];
+  /** Dynamic label override per role. */
+  labelForRole?: Partial<Record<UserRole, string>>;
 };
 
 const SECTIONS: { group: string; items: NavItem[] }[] = [
   {
     group: "Overview",
     items: [{ href: "/dashboard", label: "Dashboard", icon: "dashboard" }],
+  },
+  {
+    group: "Provisioning",
+    items: [
+      {
+        href: "/packages",
+        label: "Packages",
+        icon: "scale",
+        lucide: "package",
+        superAdminOnly: true,
+      },
+      {
+        href: "/vps",
+        label: "VPS Servers",
+        icon: "services",
+        lucide: "vps",
+        roles: ["super_admin", "vps_admin"],
+        labelForRole: { vps_admin: "My VPS & Panel", super_admin: "VPS Provisioning" },
+      },
+      {
+        href: "/hosting",
+        label: "Web Hosting",
+        icon: "domains",
+        lucide: "hosting",
+        roles: ["super_admin", "hosting_admin"],
+        labelForRole: { hosting_admin: "My Hosting", super_admin: "Hosting Accounts" },
+      },
+    ],
   },
   {
     group: "Workloads",
@@ -100,11 +137,18 @@ export default function Sidebar({ role, permissions }: Props) {
     const view = { role, permissions };
     return SECTIONS.map((section) => ({
       group: section.group,
-      items: section.items.filter((item) => {
-        if (item.adminOnly) return isAdminRole(role);
-        if (item.perm) return hasPermission(view, item.perm);
-        return true;
-      }),
+      items: section.items
+        .filter((item) => {
+          if (item.superAdminOnly) return isSuperAdmin(role);
+          if (item.roles) return item.roles.includes(role);
+          if (item.adminOnly) return isAdminRole(role);
+          if (item.perm) return hasPermission(view, item.perm);
+          return true;
+        })
+        .map((item) => ({
+          ...item,
+          label: item.labelForRole?.[role] ?? item.label,
+        })),
     })).filter((s) => s.items.length > 0);
   }, [role, permissions]);
 
@@ -180,7 +224,7 @@ export default function Sidebar({ role, permissions }: Props) {
                       className={[styles.link, active ? styles.active : ""].join(" ").trim()}
                       onClick={() => setOpen(false)}
                     >
-                      <SidebarLinkLabel icon={item.icon} label={item.label} />
+                      <SidebarLinkLabel icon={item.icon} lucide={item.lucide} label={item.label} />
                     </Link>
                   </li>
                 );
@@ -197,11 +241,27 @@ export default function Sidebar({ role, permissions }: Props) {
   );
 }
 
-function SidebarLinkLabel({ icon, label }: { icon: NavIconName; label: string }) {
+function SidebarLinkLabel({
+  icon,
+  lucide,
+  label,
+}: {
+  icon: NavIconName;
+  lucide?: "package" | "vps" | "hosting";
+  label: string;
+}) {
   const { pending } = useLinkStatus();
   return (
     <span className={styles.linkRow}>
-      <NavIcon name={icon} className={styles.linkIcon} />
+      {lucide === "package" ? (
+        <Package size={16} className={styles.linkIcon} aria-hidden="true" />
+      ) : lucide === "vps" ? (
+        <Server size={16} className={styles.linkIcon} aria-hidden="true" />
+      ) : lucide === "hosting" ? (
+        <Globe size={16} className={styles.linkIcon} aria-hidden="true" />
+      ) : (
+        <NavIcon name={icon} className={styles.linkIcon} />
+      )}
       <span className={styles.linkText}>{label}</span>
       {pending && <span className={styles.linkSpinner} aria-hidden="true" />}
     </span>

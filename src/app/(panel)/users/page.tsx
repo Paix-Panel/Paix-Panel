@@ -131,9 +131,11 @@ export default async function UsersPage() {
                   tone={
                     targetRole === "super_admin"
                       ? "info"
-                      : targetRole === "admin"
+                      : targetRole === "admin" || targetRole === "vps_admin"
                         ? "ok"
-                        : "muted"
+                        : targetRole === "hosting_admin"
+                          ? "warn"
+                          : "muted"
                   }
                 />
               ),

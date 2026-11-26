@@ -243,3 +243,116 @@ export async function emptyTrashAction(): Promise<FilesResult> {
     return fail(e);
   }
 }
+
+/**
+ * Create a set of relative subdirectories (shallowest first) before uploading
+ * a whole folder tree. Existing directories are left untouched (`existOk`).
+ */
+export async function ensureFoldersAction(
+  root: string,
+  basePath: string,
+  relDirs: string[],
+): Promise<FilesResult> {
+  const s = await requirePermission("files");
+  try {
+    const seen = new Set<string>();
+    const allDirs: string[] = [];
+    for (const raw of relDirs) {
+      const clean = raw.replace(/^\/+|\/+$/g, "");
+      if (!clean) continue;
+      const parts = clean.split("/").filter(Boolean);
+      let acc = "";
+      for (const part of parts) {
+        acc = acc ? `${acc}/${part}` : part;
+        if (!seen.has(acc)) {
+          seen.add(acc);
+          allDirs.push(acc);
+        }
+      }
+    }
+    allDirs.sort((a, b) => a.split("/").length - b.split("/").length);
+
+    for (const rel of allDirs) {
+      const idx = rel.lastIndexOf("/");
+      const relParent = idx === -1 ? "" : rel.slice(0, idx);
+      const name = idx === -1 ? rel : rel.slice(idx + 1);
+      const targetParent = basePath
+        ? relParent
+          ? `${basePath}/${relParent}`
+          : basePath
+        : relParent;
+      await agent.files.mkdir(root, targetParent, name, { existOk: true });
+    }
+
+    if (allDirs.length > 0) {
+      writeAudit({
+        actorId: s.userId,
+        action: "files.mkdir_tree",
+        target: `${abs(await rootPathOf(root), basePath)} (${allDirs.length} folders)`,
+        result: "ok",
+      });
+      revalidatePath(`/files/${root}`);
+    }
+    return { ok: true };
+  } catch (e: unknown) {
+    return fail(e);
+  }
+}
+
+export async function compressFilesAction(
+  root: string,
+  path: string,
+  paths: string[],
+  archiveName: string,
+  overwrite = false,
+): Promise<{ ok: true; path: string; size: number } | { ok: false; error: string }> {
+  const s = await requirePermission("files");
+  try {
+    const res = await agent.files.compress({
+      root,
+      path,
+      paths,
+      archiveName,
+      overwrite,
+    });
+    writeAudit({
+      actorId: s.userId,
+      action: "files.compress",
+      target: abs(await rootPathOf(root), res.path),
+      result: "ok",
+    });
+    revalidatePath(`/files/${root}`);
+    return { ok: true, path: res.path, size: res.size };
+  } catch (e: unknown) {
+    return fail(e);
+  }
+}
+
+export async function extractArchiveAction(
+  root: string,
+  path: string,
+  dest?: string,
+  overwrite = false,
+): Promise<{ ok: true; dest: string; extracted: number } | { ok: false; error: string }> {
+  const s = await requirePermission("files");
+  try {
+    const res = await agent.files.extract({
+      root,
+      path,
+      dest,
+      overwrite,
+    });
+    const rootPath = await rootPathOf(root);
+    writeAudit({
+      actorId: s.userId,
+      action: "files.extract",
+      target: `${abs(rootPath, path)} -> ${abs(rootPath, res.dest)} (${res.extracted} entries)`,
+      result: "ok",
+    });
+    revalidatePath(`/files/${root}`);
+    return { ok: true, dest: res.dest, extracted: res.extracted };
+  } catch (e: unknown) {
+    return fail(e);
+  }
+}
+

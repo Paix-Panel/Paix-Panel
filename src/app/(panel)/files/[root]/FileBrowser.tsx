@@ -2,20 +2,44 @@
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
+import {
+  FileArchive,
+  FilePlus,
+  FolderPlus,
+  FolderUp,
+  PackageOpen,
+  Upload,
+} from "lucide-react";
 import type { FileEntry, FileListing } from "@/lib/agent";
 import ConfirmDialog from "@/components/ConfirmDialog/ConfirmDialog";
 import pageStyles from "@/components/page.module.css";
 import styles from "../files.module.css";
 import {
+  compressFilesAction,
   createFileAction,
   createFolderAction,
+  ensureFoldersAction,
+  extractArchiveAction,
   listDirAction,
   moveAction,
   renameAction,
   trashAction,
 } from "@/server-actions/files";
 
-type DialogKind = "newFolder" | "newFile" | "rename" | "delete";
+type DialogKind =
+  | "newFolder"
+  | "newFile"
+  | "rename"
+  | "delete"
+  | "compress"
+  | "extract"
+  | "uploadZip";
+
+type UploadItem = {
+  file: File;
+  /** Subfolder path relative to the current directory ("" for top-level). */
+  relDir: string;
+};
 
 /** An error to show: a sentence, or a summary with one line per item that a
  *  move or a move to Trash refused. */
@@ -73,7 +97,9 @@ function ErrorBody({ error }: { error: ErrorState }) {
 
 /** Join a directory path and a name, both relative to the root. */
 function joinPath(dir: string, name: string): string {
-  return dir ? `${dir}/${name}` : name;
+  if (!dir) return name;
+  if (!name) return dir;
+  return `${dir}/${name}`;
 }
 
 function parentOf(path: string): string {
@@ -107,6 +133,14 @@ function isDirLike(e: FileEntry): boolean {
 function extOf(name: string): string {
   const i = name.lastIndexOf(".");
   return i === -1 ? "" : name.slice(i + 1).toLowerCase();
+}
+
+function isZipName(name: string): boolean {
+  return name.toLowerCase().endsWith(".zip");
+}
+
+function zipStem(name: string): string {
+  return isZipName(name) ? name.slice(0, -4) || "extracted" : name;
 }
 
 const IMAGE_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "ico"]);
@@ -182,6 +216,58 @@ function errorText(res: UploadResult): string {
   }
 }
 
+function readAllDirectoryEntries(
+  reader: FileSystemDirectoryReader,
+): Promise<FileSystemEntry[]> {
+  return new Promise((resolve, reject) => {
+    const all: FileSystemEntry[] = [];
+    const step = () => {
+      reader.readEntries(
+        (batch) => {
+          if (batch.length === 0) resolve(all);
+          else {
+            all.push(...batch);
+            step();
+          }
+        },
+        (err) => reject(err),
+      );
+    };
+    step();
+  });
+}
+
+function readFileEntry(entry: FileSystemFileEntry): Promise<File> {
+  return new Promise((resolve, reject) => entry.file(resolve, reject));
+}
+
+async function collectDroppedEntries(
+  entries: FileSystemEntry[],
+): Promise<{ items: UploadItem[]; dirs: string[] }> {
+  const items: UploadItem[] = [];
+  const dirs: string[] = [];
+
+  async function walk(entry: FileSystemEntry, parentRel: string) {
+    if (entry.isFile) {
+      const file = await readFileEntry(entry as FileSystemFileEntry);
+      items.push({ file, relDir: parentRel });
+    } else if (entry.isDirectory) {
+      const dirEntry = entry as FileSystemDirectoryEntry;
+      const rel = parentRel ? `${parentRel}/${entry.name}` : entry.name;
+      dirs.push(rel);
+      const children = await readAllDirectoryEntries(dirEntry.createReader());
+      for (const child of children) {
+        await walk(child, rel);
+      }
+    }
+  }
+
+  for (const entry of entries) {
+    await walk(entry, "");
+  }
+  return { items, dirs };
+}
+
 /**
  * The file manager itself.
  *
@@ -207,6 +293,13 @@ export default function FileBrowser({
   const [notice, setNotice] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [nameInput, setNameInput] = useState("");
+  const [overwriteInput, setOverwriteInput] = useState(false);
+  const [extractMode, setExtractMode] = useState<"here" | "subfolder">("here");
+  const [extractSubdir, setExtractSubdir] = useState("");
+  const [extractTargetName, setExtractTargetName] = useState<string | null>(null);
+  const [pendingZipFile, setPendingZipFile] = useState<File | null>(null);
+  const [zipAutoExtract, setZipAutoExtract] = useState(true);
+  const [zipRemoveAfter, setZipRemoveAfter] = useState(false);
   const [pending, startTransition] = useTransition();
   // Which drop target is lit: a directory name, "..", or `crumb:<path>`.
   const [dropTarget, setDropTarget] = useState<string | null>(null);
@@ -214,6 +307,8 @@ export default function FileBrowser({
   const dragPaths = useRef<string[]>([]);
   const nameRef = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const folderInput = useRef<HTMLInputElement>(null);
+  const zipInput = useRef<HTMLInputElement>(null);
   const uploadAbort = useRef<AbortController | null>(null);
   // Upload progress: which file, how far through the batch, and how far
   // through this file.
@@ -228,11 +323,24 @@ export default function FileBrowser({
   const [preview, setPreview] = useState<FileEntry | null>(null);
   const [previewText, setPreviewText] = useState<string | null>(null);
 
+  // Set directory-picking attributes via DOM so React 19 doesn't warn on unknown attributes.
+  useEffect(() => {
+    const el = folderInput.current;
+    if (!el) return;
+    el.setAttribute("webkitdirectory", "");
+    el.setAttribute("directory", "");
+  }, [listing.writable]);
+
   // ConfirmDialog focuses its Confirm button on open, which lands AFTER the
   // input's autoFocus and steals it. Claim focus back once, on open, so a
   // "New folder" dialog is immediately typeable.
   useEffect(() => {
-    if (dialog === "newFolder" || dialog === "newFile" || dialog === "rename") {
+    if (
+      dialog === "newFolder" ||
+      dialog === "newFile" ||
+      dialog === "rename" ||
+      dialog === "compress"
+    ) {
       const input = nameRef.current;
       if (!input) return;
       input.focus();
@@ -283,6 +391,11 @@ export default function FileBrowser({
   const selectedEntries = listing.entries.filter((e) => selected.has(e.name));
   const canActOnSelection =
     selectedEntries.length > 0 && selectedEntries.every((e) => !e.locked) && root.writable;
+  const selectedSingleZip =
+    selectedEntries.length === 1 &&
+    !isDirLike(selectedEntries[0]) &&
+    isZipName(selectedEntries[0].name) &&
+    listing.writable;
 
   const toggle = (name: string) =>
     setSelected((prev) => {
@@ -356,9 +469,15 @@ export default function FileBrowser({
    * 2 GB streams would each pass that check on the way in and collectively
    * blow through it.
    */
-  const uploadFiles = useCallback(
-    async (files: File[]) => {
-      if (files.length === 0) return;
+  const uploadItems = useCallback(
+    async (
+      items: UploadItem[],
+      emptyDirs: string[] = [],
+      opts?: { overwrite?: boolean },
+    ): Promise<{ uploaded: number; failures: string[] }> => {
+      if (items.length === 0 && emptyDirs.length === 0) {
+        return { uploaded: 0, failures: [] };
+      }
       setError(null);
       setNotice(null);
       const controller = new AbortController();
@@ -366,51 +485,106 @@ export default function FileBrowser({
       const failures: string[] = [];
       let done = 0;
 
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
+      const uniqueDirs = Array.from(
+        new Set([
+          ...emptyDirs.filter(Boolean),
+          ...items.map((it) => it.relDir).filter(Boolean),
+        ]),
+      );
+
+      if (uniqueDirs.length > 0) {
+        setUploading({
+          name: `Preparing ${uniqueDirs.length} folder${uniqueDirs.length === 1 ? "" : "s"}…`,
+          done: 0,
+          total: items.length || 1,
+          pct: 0,
+        });
+        const dirRes = await ensureFoldersAction(root.id, path, uniqueDirs);
+        if (!dirRes.ok) {
+          uploadAbort.current = null;
+          setUploading(null);
+          const msg = agentSentence(dirRes.error);
+          setError(msg);
+          return { uploaded: 0, failures: [msg] };
+        }
+      }
+
+      for (let i = 0; i < items.length; i++) {
+        const { file, relDir } = items[i];
+        const displayName = relDir ? `${relDir}/${file.name}` : file.name;
         if (file.size > maxUploadMb * 1024 * 1024) {
           failures.push(
-            `${file.name}: larger than the ${maxUploadMb} MB upload limit (Settings > Panel > Uploads)`,
+            `${displayName}: larger than the ${maxUploadMb} MB upload limit (Settings > Panel > Uploads)`,
           );
           continue;
         }
-        setUploading({ name: file.name, done: i, total: files.length, pct: 0 });
-        const q = new URLSearchParams({ root: root.id, path, name: file.name });
+        setUploading({ name: displayName, done: i, total: items.length, pct: 0 });
+        const targetDir = joinPath(path, relDir);
+        const q = new URLSearchParams({
+          root: root.id,
+          path: targetDir,
+          name: file.name,
+        });
+        if (opts?.overwrite) q.set("overwrite", "1");
         try {
           const res = await putFile(
             `/api/files/upload?${q.toString()}`,
             file,
             (fraction) =>
               setUploading({
-                name: file.name,
+                name: displayName,
                 done: i,
-                total: files.length,
+                total: items.length,
                 pct: Math.round(fraction * 100),
               }),
             controller.signal,
           );
           if (res.ok) done++;
-          else failures.push(`${file.name}: ${errorText(res)}`);
+          else failures.push(`${displayName}: ${errorText(res)}`);
         } catch (e: unknown) {
           if (e instanceof DOMException && e.name === "AbortError") {
-            failures.push(`${file.name}: cancelled`);
+            failures.push(`${displayName}: cancelled`);
             break; // don't start the remaining files
           }
-          failures.push(`${file.name}: ${e instanceof Error ? e.message : String(e)}`);
+          failures.push(`${displayName}: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
 
       uploadAbort.current = null;
       setUploading(null);
       if (failures.length > 0) setError(failures.join("; "));
-      if (done > 0) setNotice(`Uploaded ${done} file${done === 1 ? "" : "s"}.`);
+      if (done > 0 || (uniqueDirs.length > 0 && failures.length === 0)) {
+        const folderNote =
+          uniqueDirs.length > 0
+            ? ` across ${uniqueDirs.length} folder${uniqueDirs.length === 1 ? "" : "s"}`
+            : "";
+        setNotice(
+          done > 0
+            ? `Uploaded ${done} file${done === 1 ? "" : "s"}${folderNote}.`
+            : `Created ${uniqueDirs.length} folder${uniqueDirs.length === 1 ? "" : "s"}.`,
+        );
+      }
       // Re-read the folder being shown, which is not the upload's folder if
       // the operator browsed on meanwhile: showing that listing again put
       // them back in it under the other folder's URL.
       const fresh = await listDirAction(root.id, pathRef.current);
       if (fresh.ok) setListing(fresh.listing);
+      return { uploaded: done, failures };
     },
     [root.id, path, maxUploadMb],
+  );
+
+  const uploadFiles = useCallback(
+    async (files: File[]) => {
+      const items: UploadItem[] = files.map((file) => {
+        const relPath = (file as File & { webkitRelativePath?: string }).webkitRelativePath ?? "";
+        const slash = relPath.lastIndexOf("/");
+        const relDir = slash > 0 ? relPath.slice(0, slash) : "";
+        return { file, relDir };
+      });
+      await uploadItems(items);
+    },
+    [uploadItems],
   );
 
   const openPreview = useCallback(
@@ -441,8 +615,52 @@ export default function FileBrowser({
 
   const runDialog = () => {
     const name = nameInput.trim();
+    if (dialog === "uploadZip") {
+      const zipFile = pendingZipFile;
+      if (!zipFile) return;
+      const shouldExtract = zipAutoExtract;
+      const mode = extractMode;
+      const subdir = extractSubdir.trim();
+      const overwrite = overwriteInput;
+      const removeAfter = zipRemoveAfter;
+      setDialog(null);
+      setPendingZipFile(null);
+
+      void (async () => {
+        const { uploaded } = await uploadItems([{ file: zipFile, relDir: "" }], [], {
+          overwrite,
+        });
+        if (uploaded !== 1 || !shouldExtract) return;
+
+        const destRel =
+          mode === "subfolder" && subdir ? joinPath(path, subdir) : path || undefined;
+        const zipPath = joinPath(path, zipFile.name);
+        startTransition(async () => {
+          const ex = await extractArchiveAction(root.id, zipPath, destRel, overwrite);
+          if (!ex.ok) {
+            setError(agentSentence(ex.error));
+            return;
+          }
+          if (removeAfter) {
+            await trashAction(root.id, [zipPath]);
+          }
+          setError(null);
+          setNotice(
+            `Uploaded ${zipFile.name} and extracted ${ex.extracted} item${
+              ex.extracted === 1 ? "" : "s"
+            }${ex.dest ? ` into ${ex.dest}` : ""}.`,
+          );
+          const fresh = await listDirAction(root.id, pathRef.current);
+          if (fresh.ok) setListing(fresh.listing);
+        });
+      })();
+      return;
+    }
+
     startTransition(async () => {
-      let res;
+      let res:
+        | { ok: true; path?: string; size?: number; dest?: string; extracted?: number }
+        | { ok: false; error: string };
       const count = selectedEntries.length;
       if (dialog === "newFolder") res = await createFolderAction(root.id, path, name);
       else if (dialog === "newFile") res = await createFileAction(root.id, path, name);
@@ -450,13 +668,33 @@ export default function FileBrowser({
         const target = selectedEntries[0];
         if (!target) return;
         res = await renameAction(root.id, joinPath(path, target.name), name);
-      }
-      else if (dialog === "delete")
+      } else if (dialog === "delete") {
         res = await trashAction(
           root.id,
           selectedEntries.map((e) => joinPath(path, e.name)),
         );
-      else return;
+      } else if (dialog === "compress") {
+        res = await compressFilesAction(
+          root.id,
+          path,
+          selectedEntries.map((e) => joinPath(path, e.name)),
+          name,
+          overwriteInput,
+        );
+      } else if (dialog === "extract") {
+        const targetName = extractTargetName ?? selectedEntries[0]?.name;
+        if (!targetName) return;
+        const destRel =
+          extractMode === "subfolder" && extractSubdir.trim()
+            ? joinPath(path, extractSubdir.trim())
+            : path || undefined;
+        res = await extractArchiveAction(
+          root.id,
+          joinPath(path, targetName),
+          destRel,
+          overwriteInput,
+        );
+      } else return;
 
       if (!res.ok) {
         // Shown in the dialog, which stays open: on the page behind it the
@@ -466,15 +704,29 @@ export default function FileBrowser({
         );
       } else {
         setError(null);
-        setNotice(
-          dialog === "delete"
-            ? `Moved ${selectedEntries.length} item${
-                selectedEntries.length === 1 ? "" : "s"
-              } to Trash. Restorable for 30 days.`
-            : null,
-        );
+        if (dialog === "delete") {
+          setNotice(
+            `Moved ${selectedEntries.length} item${
+              selectedEntries.length === 1 ? "" : "s"
+            } to Trash. Restorable for 30 days.`,
+          );
+        } else if (dialog === "compress") {
+          setNotice(
+            `Created ${res.path ?? name} (${formatBytes(res.size ?? 0)}).`,
+          );
+        } else if (dialog === "extract") {
+          const n = res.extracted ?? 0;
+          setNotice(
+            `Extracted ${n} item${n === 1 ? "" : "s"}${
+              res.dest ? ` into ${res.dest}` : " into current folder"
+            }.`,
+          );
+        } else {
+          setNotice(null);
+        }
         setDialog(null);
         setNameInput("");
+        setExtractTargetName(null);
       }
       const fresh = await listDirAction(root.id, path);
       if (fresh.ok) setListing(fresh.listing);
@@ -485,11 +737,42 @@ export default function FileBrowser({
     });
   };
 
-  const openDialog = (kind: DialogKind) => {
+  const openDialog = (kind: DialogKind, zipOverrideName?: string) => {
     setError(null);
     setNotice(null);
-    setNameInput(kind === "rename" ? selectedEntries[0]?.name ?? "" : "");
+    setOverwriteInput(false);
+    if (kind === "rename") {
+      setNameInput(selectedEntries[0]?.name ?? "");
+    } else if (kind === "compress") {
+      const def =
+        selectedEntries.length === 1
+          ? isZipName(selectedEntries[0].name)
+            ? `${zipStem(selectedEntries[0].name)}-copy.zip`
+            : `${selectedEntries[0].name}.zip`
+          : "archive.zip";
+      setNameInput(def);
+    } else if (kind === "extract") {
+      const zName = zipOverrideName ?? selectedEntries[0]?.name ?? "";
+      setExtractTargetName(zName);
+      setExtractMode("here");
+      setExtractSubdir(zipStem(zName));
+      setNameInput("");
+    } else {
+      setNameInput("");
+    }
     setDialog(kind);
+  };
+
+  const openUploadZipDialog = (file: File) => {
+    setError(null);
+    setNotice(null);
+    setPendingZipFile(file);
+    setZipAutoExtract(true);
+    setZipRemoveAfter(false);
+    setOverwriteInput(false);
+    setExtractMode("here");
+    setExtractSubdir(zipStem(file.name));
+    setDialog("uploadZip");
   };
 
   // --- render ---------------------------------------------------------------
@@ -578,7 +861,10 @@ export default function FileBrowser({
                 onClick={() => openDialog("newFolder")}
                 disabled={pending}
               >
-                + Folder
+                <span className={styles.btnInner}>
+                  <FolderPlus size={14} />
+                  Folder
+                </span>
               </button>
               <button
                 type="button"
@@ -586,7 +872,10 @@ export default function FileBrowser({
                 onClick={() => openDialog("newFile")}
                 disabled={pending}
               >
-                + File
+                <span className={styles.btnInner}>
+                  <FilePlus size={14} />
+                  File
+                </span>
               </button>
               <button
                 type="button"
@@ -594,7 +883,34 @@ export default function FileBrowser({
                 onClick={() => fileInput.current?.click()}
                 disabled={pending || uploading !== null}
               >
-                Upload
+                <span className={styles.btnInner}>
+                  <Upload size={14} />
+                  Upload
+                </span>
+              </button>
+              <button
+                type="button"
+                className={pageStyles.btnGhost}
+                onClick={() => folderInput.current?.click()}
+                disabled={pending || uploading !== null}
+                title="Upload an entire folder and all subfolders"
+              >
+                <span className={styles.btnInner}>
+                  <FolderUp size={14} />
+                  Upload Folder
+                </span>
+              </button>
+              <button
+                type="button"
+                className={pageStyles.btnGhost}
+                onClick={() => zipInput.current?.click()}
+                disabled={pending || uploading !== null}
+                title="Upload a .zip archive and optionally extract it"
+              >
+                <span className={styles.btnInner}>
+                  <PackageOpen size={14} />
+                  Upload ZIP
+                </span>
               </button>
               <input
                 ref={fileInput}
@@ -608,6 +924,28 @@ export default function FileBrowser({
                   void uploadFiles(files);
                 }}
               />
+              <input
+                ref={folderInput}
+                type="file"
+                multiple
+                hidden
+                onChange={(ev) => {
+                  const files = Array.from(ev.target.files ?? []);
+                  ev.target.value = "";
+                  void uploadFiles(files);
+                }}
+              />
+              <input
+                ref={zipInput}
+                type="file"
+                accept=".zip,application/zip"
+                hidden
+                onChange={(ev) => {
+                  const file = ev.target.files?.[0];
+                  ev.target.value = "";
+                  if (file) openUploadZipDialog(file);
+                }}
+              />
             </>
           )}
           {selectedEntries.length === 1 && !isDirLike(selectedEntries[0]) && (
@@ -618,6 +956,36 @@ export default function FileBrowser({
             >
               Download
             </a>
+          )}
+          {listing.writable && (
+            <>
+              <button
+                type="button"
+                className={pageStyles.btnGhost}
+                onClick={() => openDialog("compress")}
+                disabled={pending || uploading !== null || !canActOnSelection}
+                title="Compress selected files and folders into a .zip archive"
+              >
+                <span className={styles.btnInner}>
+                  <FileArchive size={14} />
+                  Compress
+                </span>
+              </button>
+              {selectedSingleZip && (
+                <button
+                  type="button"
+                  className={pageStyles.btnGhost}
+                  onClick={() => openDialog("extract")}
+                  disabled={pending || uploading !== null}
+                  title="Extract selected .zip archive"
+                >
+                  <span className={styles.btnInner}>
+                    <PackageOpen size={14} />
+                    Extract
+                  </span>
+                </button>
+              )}
+            </>
           )}
           <button
             type="button"
@@ -648,9 +1016,10 @@ export default function FileBrowser({
 
       {root.writable && (
         <div className={styles.hint}>
-          Drag rows onto a folder — or onto a breadcrumb above — to move them. Drop files
-          from your computer anywhere on the list to upload. Deleted items go to Trash and
-          are restorable for 30 days.
+          Drag rows onto a folder or breadcrumb to move them. Drop files, folders, or{" "}
+          <span className={pageStyles.code}>.zip</span> archives anywhere on the list to
+          upload. Select items to compress into a <span className={pageStyles.code}>.zip</span>{" "}
+          or click a <span className={pageStyles.code}>.zip</span> file to extract it.
         </div>
       )}
 
@@ -707,7 +1076,22 @@ export default function FileBrowser({
           if (!listing.writable || !e.dataTransfer.types.includes("Files")) return;
           e.preventDefault();
           setFileDrag(false);
-          void uploadFiles(Array.from(e.dataTransfer.files));
+          const dtItems = Array.from(e.dataTransfer.items ?? []);
+          const fsEntries = dtItems
+            .map((it) =>
+              typeof it.webkitGetAsEntry === "function" ? it.webkitGetAsEntry() : null,
+            )
+            .filter((entry): entry is FileSystemEntry => entry !== null);
+
+          if (fsEntries.length > 0) {
+            void collectDroppedEntries(fsEntries)
+              .then(({ items, dirs }) => uploadItems(items, dirs))
+              .catch((err: unknown) =>
+                setError(err instanceof Error ? err.message : String(err)),
+              );
+          } else {
+            void uploadFiles(Array.from(e.dataTransfer.files));
+          }
         }}
       >
         <div className={[styles.row, styles.rowHead].join(" ")}>
@@ -757,6 +1141,7 @@ export default function FileBrowser({
 
         {listing.entries.map((e) => {
           const dir = isDirLike(e);
+          const isZip = !dir && e.kind === "file" && isZipName(e.name);
           const isSelected = selected.has(e.name);
           const isDropTarget = dropTarget === e.name;
           return (
@@ -815,6 +1200,18 @@ export default function FileBrowser({
                   >
                     {e.name}
                   </button>
+                ) : isZip && listing.writable ? (
+                  <button
+                    type="button"
+                    className={styles.nameBtn}
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      openDialog("extract", e.name);
+                    }}
+                    title={`Extract ${e.name}`}
+                  >
+                    {e.name}
+                  </button>
                 ) : e.kind === "file" && previewKind(e.name) ? (
                   <button
                     type="button"
@@ -832,6 +1229,7 @@ export default function FileBrowser({
                     {e.name}
                   </span>
                 )}
+                {isZip && <span className={styles.zipBadge}>zip</span>}
                 {e.link_target && (
                   <span className={styles.linkTarget} title={e.link_target}>
                     → {e.link_target}
@@ -913,6 +1311,202 @@ export default function FileBrowser({
       </ConfirmDialog>
 
       <ConfirmDialog
+        open={dialog === "compress"}
+        title={`Compress ${selectedEntries.length} item${selectedEntries.length === 1 ? "" : "s"}`}
+        confirmLabel="Create .zip"
+        pending={pending}
+        onConfirm={runDialog}
+        onCancel={() => {
+          setDialog(null);
+          setNameInput("");
+        }}
+      >
+        <div className={pageStyles.field}>
+          <label htmlFor="files-zip-name-input">Archive name</label>
+          <input
+            id="files-zip-name-input"
+            ref={nameRef}
+            className={pageStyles.input}
+            value={nameInput}
+            onChange={(ev) => setNameInput(ev.target.value)}
+            placeholder="archive.zip"
+            onKeyDown={(ev) => {
+              if (ev.key === "Enter" && nameInput.trim() && !pending) runDialog();
+            }}
+          />
+        </div>
+        <div className={styles.optionGroup}>
+          <label className={styles.optionRow}>
+            <input
+              type="checkbox"
+              checked={overwriteInput}
+              onChange={(ev) => setOverwriteInput(ev.target.checked)}
+            />
+            <span>Overwrite if archive already exists</span>
+          </label>
+        </div>
+        <div className={pageStyles.muted} style={{ fontSize: 12, marginTop: 8 }}>
+          Output in <span className={pageStyles.code}>{listing.abs_path}</span>
+        </div>
+        <ul className={styles.dialogList}>
+          {selectedEntries.map((e) => (
+            <li key={e.name}>
+              {e.name}
+              {isDirLike(e) ? "/" : ""}
+            </li>
+          ))}
+        </ul>
+        {error && (
+          <div className={pageStyles.error} role="alert" style={{ marginTop: 10 }}>
+            <ErrorBody error={error} />
+          </div>
+        )}
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={dialog === "extract"}
+        title={`Extract ${extractTargetName ?? ""}`}
+        confirmLabel="Extract ZIP"
+        pending={pending}
+        onConfirm={runDialog}
+        onCancel={() => {
+          setDialog(null);
+          setExtractTargetName(null);
+        }}
+      >
+        <div style={{ fontSize: 13 }}>
+          Choose where to extract the archive contents:
+        </div>
+        <div className={styles.optionGroup}>
+          <label className={styles.optionRow}>
+            <input
+              type="radio"
+              name="extract-dest-mode"
+              checked={extractMode === "here"}
+              onChange={() => setExtractMode("here")}
+            />
+            <span>
+              Current folder (<span className={pageStyles.code}>{listing.abs_path}</span>)
+            </span>
+          </label>
+          <label className={styles.optionRow}>
+            <input
+              type="radio"
+              name="extract-dest-mode"
+              checked={extractMode === "subfolder"}
+              onChange={() => setExtractMode("subfolder")}
+            />
+            <span>Into subfolder:</span>
+          </label>
+          {extractMode === "subfolder" && (
+            <div className={styles.subField}>
+              <input
+                className={pageStyles.input}
+                value={extractSubdir}
+                onChange={(ev) => setExtractSubdir(ev.target.value)}
+                placeholder="folder-name"
+              />
+            </div>
+          )}
+          <label className={styles.optionRow} style={{ marginTop: 4 }}>
+            <input
+              type="checkbox"
+              checked={overwriteInput}
+              onChange={(ev) => setOverwriteInput(ev.target.checked)}
+            />
+            <span>Overwrite existing files</span>
+          </label>
+        </div>
+        {error && (
+          <div className={pageStyles.error} role="alert" style={{ marginTop: 10 }}>
+            <ErrorBody error={error} />
+          </div>
+        )}
+      </ConfirmDialog>
+
+      <ConfirmDialog
+        open={dialog === "uploadZip" && pendingZipFile !== null}
+        title="Upload ZIP archive"
+        confirmLabel={zipAutoExtract ? "Upload & Extract" : "Upload ZIP"}
+        pending={pending || uploading !== null}
+        onConfirm={runDialog}
+        onCancel={() => {
+          setDialog(null);
+          setPendingZipFile(null);
+        }}
+      >
+        {pendingZipFile && (
+          <div>
+            <div style={{ fontSize: 13 }}>
+              File: <span className={pageStyles.code}>{pendingZipFile.name}</span> (
+              {formatBytes(pendingZipFile.size)})
+            </div>
+            <div className={styles.optionGroup}>
+              <label className={styles.optionRow}>
+                <input
+                  type="checkbox"
+                  checked={zipAutoExtract}
+                  onChange={(ev) => setZipAutoExtract(ev.target.checked)}
+                />
+                <span>Extract archive immediately after upload</span>
+              </label>
+              {zipAutoExtract && (
+                <>
+                  <label className={styles.optionRow}>
+                    <input
+                      type="radio"
+                      name="upload-zip-dest"
+                      checked={extractMode === "here"}
+                      onChange={() => setExtractMode("here")}
+                    />
+                    <span>
+                      Extract into current folder (
+                      <span className={pageStyles.code}>{listing.abs_path}</span>)
+                    </span>
+                  </label>
+                  <label className={styles.optionRow}>
+                    <input
+                      type="radio"
+                      name="upload-zip-dest"
+                      checked={extractMode === "subfolder"}
+                      onChange={() => setExtractMode("subfolder")}
+                    />
+                    <span>Extract into subfolder:</span>
+                  </label>
+                  {extractMode === "subfolder" && (
+                    <div className={styles.subField}>
+                      <input
+                        className={pageStyles.input}
+                        value={extractSubdir}
+                        onChange={(ev) => setExtractSubdir(ev.target.value)}
+                        placeholder="folder-name"
+                      />
+                    </div>
+                  )}
+                  <label className={styles.optionRow}>
+                    <input
+                      type="checkbox"
+                      checked={zipRemoveAfter}
+                      onChange={(ev) => setZipRemoveAfter(ev.target.checked)}
+                    />
+                    <span>Move uploaded .zip to Trash after extracting</span>
+                  </label>
+                </>
+              )}
+              <label className={styles.optionRow}>
+                <input
+                  type="checkbox"
+                  checked={overwriteInput}
+                  onChange={(ev) => setOverwriteInput(ev.target.checked)}
+                />
+                <span>Overwrite existing files if they collide</span>
+              </label>
+            </div>
+          </div>
+        )}
+      </ConfirmDialog>
+
+      <ConfirmDialog
         open={dialog === "delete"}
         title={`Move ${selectedEntries.length} item${
           selectedEntries.length === 1 ? "" : "s"
@@ -985,3 +1579,4 @@ export default function FileBrowser({
     </div>
   );
 }
+
